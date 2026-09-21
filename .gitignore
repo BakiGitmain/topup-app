@@ -41,3 +41,9 @@ example
 # generated native folders
 /ios
 /android
+.env
+# supplier catalog dumps contain wholesale costs
+scripts/out/
+
+# Test data with wholesale costs: never commit
+supabase/test-data/

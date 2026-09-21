@@ -1,0 +1,6 @@
+-- Intentionally empty.
+--
+-- The shop starts with NO products. Everything in it is imported from the supplier catalog (Admin >
+-- Catalog > Import from supplier), so nothing here can put placeholder products back on a fresh database.
+--
+-- The database tests use their own fixture: supabase/tests/fixtures/placeholder-catalog.sql.
