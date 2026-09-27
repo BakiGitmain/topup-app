@@ -17,6 +17,7 @@ import { useToast } from '../../lib/toast';
 import { FeatherIcon } from '../art/FeatherIcon';
 import { BottomSheet } from '../ui/BottomSheet';
 import { Button } from '../ui/Button';
+import { CopyButton } from '../ui/CopyButton';
 import { ErrorBanner } from '../ui/ErrorBanner';
 import { STATUS_LABELS_EN, StatusBadge } from '../ui/StatusBadge';
 import { OrderTrail } from './OrderTrail';
@@ -58,7 +59,10 @@ function SheetBody({
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
 
-  const open = order.status === 'pending' || order.status === 'processing';
+  // 'paid' (bank transfer or instant wallet payment) is worked exactly like 'pending' (the older direct-purchase
+  // path's default status): both get the same actions below, since admin_deliver_order/admin_set_order_status
+  // accept either as a starting point.
+  const open = order.status === 'pending' || order.status === 'paid' || order.status === 'processing';
   const needsCode = order.fulfillment === 'code';
   const fields = describeFields(order.delivery);
   const verification = verificationOf(order);
@@ -79,11 +83,6 @@ function SheetBody({
       setBusy(false);
       setConfirm(null);
     }
-  }
-
-  async function copyField(label: string, value: string) {
-    await Clipboard.setStringAsync(value);
-    toast(`${label} copied`);
   }
 
   async function pasteCode() {
@@ -117,7 +116,7 @@ function SheetBody({
           <Text style={styles.idValue} selectable>
             {value}
           </Text>
-          <Button label={`Copy ${label}`} onPress={() => copyField(label, value)} style={styles.copy} />
+          <CopyButton value={value} accessibilityLabel={`Copy ${label}`} variant="label" style={styles.copy} />
         </View>
       ))}
 
@@ -175,7 +174,7 @@ function SheetBody({
 
       {open ? (
         <View style={styles.actions}>
-          {order.status === 'pending' ? (
+          {order.status === 'pending' || order.status === 'paid' ? (
             <Button
               label="Start processing"
               variant="outline"
@@ -292,7 +291,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     color: colors.text,
   },
-  copy: { marginTop: spacing.xs },
+  copy: { marginTop: spacing.xs, alignSelf: 'flex-start' },
 
   codeCard: {
     marginTop: spacing.md,

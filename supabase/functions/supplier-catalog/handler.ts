@@ -1,10 +1,15 @@
 // The supplier-catalog request handler, with every outside dependency injected so it can be tested
 // without the network, the database or the supplier. index.ts wires the real ones.
 //
-// Two admin-only actions, both writing to the saved catalog (public.supplier_catalog):
+// Three admin-only actions, all writing to the saved catalog (public.supplier_catalog):
 //   refresh_catalog  list every supplier category and save it (packs and costs are NOT fetched here)
 //   load_offers      fetch ONE category's packs, costs and buyer form, and save them with the date
-// Searching the saved catalog needs no function: admins read the table directly (row-level security).
+//   search_catalog   list just the categories matching one query and save THOSE (see deps.searchLive below);
+//                     for a supplier whose full catalog is too large to bulk-refresh (GamesDrop: ~64k offers,
+//                     which alone takes longer than refreshTimeoutMs -- see CLAUDE.md 2026-09-22). A supplier that
+//                     doesn't implement `searchLive` (Shop2Topup keeps its bulk refresh_catalog only) answers 400.
+// Searching the saved catalog itself needs no function: admins read the table directly (row-level security);
+// search_catalog only exists to POPULATE that table for a supplier that is never bulk-refreshed.
 import {
   cleanValidationGames,
   normalizeCategory,
@@ -41,6 +46,12 @@ export type Deps = {
    */
   normalizeCategory?: (family: Family, raw: RawCategory, ctx: { blocklist: Record<string, string>; validationGames: readonly ValidationGame[]; listedAt: string }) => CategoryRow | null;
   fetchOffers: (family: Family, categoryId: string) => Promise<{ offers?: unknown; fields?: unknown }>;
+  /**
+   * Live, scoped listing for `search_catalog`: every category of one family matching `query`, fetched directly
+   * from the supplier (not the saved cache). Optional -- a supplier without this (Shop2Topup) never gets a
+   * search_catalog request from the client, so its absence never needs to be handled beyond the 400 below.
+   */
+  searchLive?: (family: Family, query: string) => Promise<RawCategory[]>;
   countCatalog: () => Promise<number>;
   /** Insert or update the listing columns only; a category's saved packs are left alone. */
   upsertCategories: (rows: CategoryRow[]) => Promise<void>;
@@ -126,6 +137,40 @@ export function createHandler(deps: Deps) {
     return json({ status: 'ok', categories: rows.length, topups, giftcards: rows.length - topups, removed, refreshed_at: listedAt });
   }
 
+  /** Same shape as refresh(), scoped to one query: never deletes anything (a partial pull must not look like the whole catalog going stale). */
+  async function search(body: { query?: unknown }): Promise<Response> {
+    if (!deps.searchLive) return json({ error: 'bad_request' }, 400);
+    const query = typeof body.query === 'string' ? body.query.trim() : '';
+    if (query.length < 2 || query.length > 60) return json({ error: 'bad_request' }, 400);
+    const listedAt = deps.now().toISOString();
+    let rows: CategoryRow[];
+    try {
+      const [blocklist, games] = await Promise.all([deps.loadBlocklist(), withTimeout(deps.listValidationGames(), deps.offersTimeoutMs)]);
+      const validationGames = cleanValidationGames(games);
+      const seen = new Set<string>();
+      rows = [];
+      for (const family of FAMILIES) {
+        const list = await withTimeout(deps.searchLive(family, query), deps.offersTimeoutMs);
+        for (const raw of list) {
+          const row = (deps.normalizeCategory ?? normalizeCategory)(family, raw, { blocklist, validationGames, listedAt });
+          if (row && !seen.has(`${family}/${row.category_id}`)) {
+            seen.add(`${family}/${row.category_id}`);
+            rows.push(row);
+          }
+        }
+      }
+    } catch (error) {
+      const reason = failReason(error);
+      deps.log({ event: 'search', outcome: 'unavailable', reason, supplier_status: (error as { status?: unknown })?.status ?? null });
+      return json({ status: 'unavailable', reason });
+    }
+
+    if (rows.length > 0) await deps.upsertCategories(rows);
+    const topups = rows.filter((r) => r.family === 'topups').length;
+    deps.log({ event: 'search', outcome: 'ok', topups, giftcards: rows.length - topups });
+    return json({ status: 'ok', categories: rows.length, topups, giftcards: rows.length - topups });
+  }
+
   async function loadOffers(body: { family?: unknown; category_id?: unknown }): Promise<Response> {
     const family = FAMILIES.find((f) => f === body.family);
     const categoryId = typeof body.category_id === 'string' && CATEGORY_ID.test(body.category_id) ? body.category_id : null;
@@ -178,6 +223,7 @@ export function createHandler(deps: Deps) {
     try {
       if (body?.action === 'refresh_catalog') return await refresh();
       if (body?.action === 'load_offers') return await loadOffers(body);
+      if (body?.action === 'search_catalog') return await search(body);
       return json({ error: 'bad_request' }, 400);
     } catch (error) {
       deps.log({ event: 'error', message: String((error as Error)?.message ?? '').slice(0, 80) });

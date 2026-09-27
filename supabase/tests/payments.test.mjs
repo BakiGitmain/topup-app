@@ -52,12 +52,14 @@ const P3 = await mkProduct('steam', 'Steam Card', 'gift-cards'); const R3 = awai
 const O4 = await mkPack(P3, R3, 'Br 500 card', 500);
 const P4 = await mkProduct('blood', 'Blood Strike'); const R4 = await mkRegion(P4, 'mena', FIELD, 'none');
 const O5 = await mkPack(P4, R4, '100 Gold', 40);
+const P5 = await mkProduct('telegram', 'Telegram', 'subscriptions'); const R5 = await mkRegion(P5, 'standard', FIELD, 'supplier');
+const O6 = await mkPack(P5, R5, 'Premium 3 Months', 2600);
 await db.exec(`insert into payment_accounts (provider, account_name, account_number) values ('telebirr','Eyosiyas Daniel Debebe','0911000000'), ('cbe','Eyosiyas Daniel Debebe','1000123456789')`);
 
 const validate = (user, region, id, { region_code = 'ME', name = 'Player', minutes = 15 } = {}) =>
   db.query(`insert into id_validations (user_id, region_id, fields, account_region, player_name, created_at, expires_at) values ($1,$2,$3::jsonb,$4,$5, now() + ($6 || ' minutes')::interval - interval '30 minutes', now() + ($6 || ' minutes')::interval)`, [user, region, JSON.stringify({ player_id: id }), region_code, name, String(minutes)]);
 const addLine = (user, option, fields, qty = 1, tick = false) => as('authenticated', user, `insert into cart_items (user_id, option_id, quantity, fields, id_checked) values ($1,$2,$3,$4::jsonb,$5) returning id`, [user, option, qty, JSON.stringify(fields), tick]);
-const reset = () => db.exec(`delete from cart_items; delete from order_items; delete from payment_attempts; delete from orders; delete from id_validations; update products set is_active = true; update product_options set is_active = true, price = case label when '110 Diamonds' then 100 when '231 Diamonds' then 250 when '60 UC' then 90 when 'Br 500 card' then 500 else 40 end; update product_regions set is_active = true;`);
+const reset = () => db.exec(`delete from cart_items; delete from order_items; delete from payment_attempts; delete from orders; delete from id_validations; update products set is_active = true; update product_options set is_active = true, price = case label when '110 Diamonds' then 100 when '231 Diamonds' then 250 when '60 UC' then 90 when 'Br 500 card' then 500 when 'Premium 3 Months' then 2600 else 40 end; update product_regions set is_active = true;`);
 const checkout = (user) => as('authenticated', user, `select public.create_cart_order() as r`);
 const failuresOf = (e) => (e?.detail ? JSON.parse(e.detail) : []);
 const counts = () => one(`select (select count(*)::int from orders) o, (select count(*)::int from order_items) i, (select count(*)::int from cart_items) c`);
@@ -268,6 +270,24 @@ ok('...and nothing was claimed or counted', (await one(`select payment_reference
 f = await finish(V.order_id, 'paid', 100, 'live');
 ok('a second "finish" for a paid order is a no-op (never two deliveries)', f.result === 'closed' && f.status === 'paid' && (await one(`select count(*)::int n from payment_attempts where order_id=$1`, [V.order_id])).n === 2);
 
+console.log('\n# a "paid" order (bank transfer here; wallet payment sets the same status the same way) now reaches the admin queue, closing the gap two real customer orders got stuck in (2026-09-23)');
+const proc = (await as('authenticated', ADM, `select (admin_set_order_status('${V.order_id}', 'processing')).status s`)).rows[0];
+ok('admin_set_order_status accepts a PAID order now, same as a pending one (used to be invalid_transition)', proc.s === 'processing');
+const del = (await as('authenticated', ADM, `select (admin_deliver_order('${V.order_id}')).status s`)).rows[0];
+ok('...and it can be delivered from there, same as before', del.s === 'completed');
+
+await addLine(A, O4, {}); // A's cart is empty (checkout consumed it) and V is no longer 'pending_payment', so a fresh
+                          // checkout is fine here -- no reset(): V's claimed reference 'CBT200002' must survive for
+                          // the tests right after this block, which check it is still claimed.
+const GC = (await checkout(A)).rows[0].r; // gift card, code fulfilment
+await begin(GC.order_id, A, 'telebirr', 'CBT700007');
+await finish(GC.order_id, 'paid', 500, 'live', 200, { verified: true, amount: 500 });
+await rejects('a customer still cannot deliver their own order', 'authenticated', A, `select admin_deliver_order('${GC.order_id}', 'X')`, /forbidden/);
+const wDel = (await as('authenticated', ADM, `select (admin_deliver_order('${GC.order_id}', 'GIFT-PAID-DIRECT-9001')).status s`)).rows[0];
+ok('admin_deliver_order also accepts PAID directly (skipping "processing"), the exact path the two stuck Roblox orders need', wDel.s === 'completed');
+ok('...and a code-fulfilment order paid this way gets its vault_codes row, same as one that went through "pending"', (await one(`select code from vault_codes where order_id=$1`, [GC.order_id])).code === 'GIFT-PAID-DIRECT-9001');
+await db.exec(`delete from vault_codes`); // a delivered code blocks "delete from orders"; reset() below needs it gone
+
 console.log('\n# a reference cannot pay a second order');
 await validate(B, R1, '77'); await addLine(B, O1, { player_id: '77' });
 const W = (await as('authenticated', B, `select public.create_cart_order() as r`)).rows[0].r;
@@ -314,6 +334,16 @@ console.log('\n# the audit log');
 ok('every attempt is logged with its outcome, mode and raw response', (await one(`select count(*)::int n, count(*) filter (where response is not null)::int r, count(*) filter (where mode = 'live')::int l from payment_attempts`)).r > 0);
 ok('an admin can read the log', (await rows('authenticated', ADM, `select id from payment_attempts`)).length > 0);
 ok('a customer sees none of it', (await rows('authenticated', A, `select id from payment_attempts`)).length === 0);
+
+console.log('\n# subscriptions category counts as topup, same as games (not code, like gift-cards)');
+await reset();
+await validate(A, R5, 'baki_x_yosi', { region_code: null, name: 'Baki Cheats.py' });
+await addLine(A, O6, { player_id: 'baki_x_yosi' });
+const sub = (await as('authenticated', A, `select public.create_cart_order() as r`)).rows[0].r;
+const subOrder = await one(`select * from orders where id=$1`, [sub.order_id]);
+ok('a subscriptions-category order is fulfillment=topup, not code', subOrder.fulfillment === 'topup', subOrder.fulfillment);
+const subItem = await one(`select * from order_items where order_id=$1`, [sub.order_id]);
+ok('...and the player ID it collected is on the line, same as a game', subItem.delivery.account_id === 'baki_x_yosi' && subItem.validated_player_name === 'Baki Cheats.py');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

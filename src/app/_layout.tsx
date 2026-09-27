@@ -14,10 +14,12 @@ import { useCallback, useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { AccountsProvider } from '../lib/accounts';
 import { AuthProvider } from '../lib/auth';
 import { CustomerBadgesProvider } from '../lib/badges';
 import { CartProvider } from '../lib/cart';
 import { I18nProvider } from '../lib/i18n';
+import { NotificationsProvider } from '../lib/notifications';
 import { colors } from '../lib/theme';
 import { ToastProvider } from '../lib/toast';
 import { ConfirmHost } from '../components/ui/ConfirmHost';
@@ -61,10 +63,12 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayout}>
       <SafeAreaProvider>
         <AuthProvider>
+          <AccountsProvider>
           <I18nProvider>
             <ToastProvider>
               <CartProvider>
               <CustomerBadgesProvider>
+              <NotificationsProvider>
                 <StatusBar style="dark" />
                 <ConfirmHost />
                 <Stack
@@ -84,10 +88,12 @@ export default function RootLayout() {
                     options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
                   />
                 </Stack>
+              </NotificationsProvider>
               </CustomerBadgesProvider>
               </CartProvider>
             </ToastProvider>
           </I18nProvider>
+          </AccountsProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

@@ -12,10 +12,11 @@ import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { Column } from '../../components/ui/TabScroll';
 import { useAuth } from '../../lib/auth';
 import { useCart } from '../../lib/cart';
-import { cancelOrder, clearPendingOrderId, fetchPayOrder, fetchPaymentAccounts, verifyPayment } from '../../lib/checkout';
+import { cancelOrder, clearPendingOrderId, fetchPayOrder, fetchPaymentAccounts, verifyPayment, type PayOrder } from '../../lib/checkout';
 import { confirmDestructive } from '../../lib/confirm';
 import { useT } from '../../lib/i18n';
-import { amountToSend, cleanReference, nextStep, type ProviderId } from '../../lib/paymentView';
+import { shortOrderId } from '../../lib/orderView';
+import { amountToSend, cleanReference, isPaymentSuccess, isSettled, nextStep, type ProviderId } from '../../lib/paymentView';
 import type { StringKey } from '../../lib/strings';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
 import { useToast } from '../../lib/toast';
@@ -26,6 +27,13 @@ import { checkoutPath } from '../../lib/walletLogic';
 const POLL_MS = 2000;
 const POLL_TRIES = 8;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** "ProductName · Label ×2" for the first item -- the "+N more" suffix (translated) is added by the caller. */
+function firstItemLine(data: PayOrder): string | null {
+  const first = data.items[0];
+  if (!first) return null;
+  return `${first.productName} · ${first.optionLabel}${first.quantity > 1 ? ` ×${first.quantity}` : ''}`;
+}
 
 export default function PayScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -47,7 +55,7 @@ export default function PayScreen() {
   const [paying, setPaying] = useState(false);
 
   const data = order.data;
-  const settled = data !== null && data.status !== 'pending_payment';
+  const settled = data !== null && isSettled(data.status);
 
   // An order that is no longer awaiting payment is nothing to resume: forget the stored id.
   useEffect(() => {
@@ -140,7 +148,8 @@ export default function PayScreen() {
       if (userId) await clearPendingOrderId(userId);
       await cart.reload();
       toast(t('pay.cancelled'));
-      router.replace('/cart');
+      // A gift order had no cart lines to put back: return to the gift menu instead.
+      router.replace(data?.giftKind ? '/gift' : '/cart');
     } catch {
       setMessage(t('pay.cancelFailed'));
     } finally {
@@ -167,14 +176,35 @@ export default function PayScreen() {
             />
           )}
 
-          {data?.status === 'paid' && (
+          {/* 'paid' is only the FIRST successful status -- fulfilment can move an order on to 'processing' or
+              'completed' before the customer ever reopens this screen (auto-fulfilment, or an admin delivering it).
+              All three are success, not "no longer waiting for payment": a customer who paid and comes back later
+              must see a success screen, never the neutral "closed" state below. */}
+          {data && isPaymentSuccess(data.status) && (
             <Outcome
               icon="check-circle"
               tone="ok"
               title={t('pay.paidTitle')}
-              body={t(data.provider === 'wallet' ? 'pay.paidWalletBody' : 'pay.paidBody', { amount: amountToSend(data.amount) })}
-              action={t('pay.viewOrders')}
-              onAction={() => router.replace('/orders')}
+              body={t('pay.paidBody')}
+              details={
+                <View style={styles.successDetails}>
+                  {firstItemLine(data) && (
+                    <Text style={styles.successDetailLine} numberOfLines={1}>
+                      {firstItemLine(data)}
+                      {data.items.length > 1 ? `  ${t('pay.moreItems', { n: String(data.items.length - 1) })}` : ''}
+                    </Text>
+                  )}
+                  <Text style={styles.successDetailLine}>{`${t('order.number')} ${shortOrderId(data.id)}`}</Text>
+                </View>
+              }
+              action={data.giftKind ? t('pay.viewGift') : data.fulfillment === 'code' ? t('pay.viewVault') : t('pay.viewOrders')}
+              onAction={() =>
+                data.giftKind
+                  ? router.replace({ pathname: '/gift/done/[id]', params: { id } })
+                  : router.replace(data.fulfillment === 'code' ? '/vault' : '/orders')
+              }
+              secondaryAction={t('pay.viewReceipt')}
+              onSecondaryAction={() => router.push({ pathname: '/order/[id]', params: { id } })}
             />
           )}
 
@@ -189,7 +219,9 @@ export default function PayScreen() {
             />
           )}
 
-          {data && settled && data.status !== 'paid' && data.status !== 'payment_mismatch' && (
+          {/* Genuinely done and NOT successful: cancelled, failed, refunded, or any other settled status this
+              screen doesn't have a specific case for. Distinct from the success branch above on purpose. */}
+          {data && settled && !isPaymentSuccess(data.status) && data.status !== 'payment_mismatch' && (
             <Outcome icon="clock" tone="warn" title={t('pay.title')} body={t('pay.closed')} action={t('pay.viewOrders')} onAction={() => router.replace('/orders')} />
           )}
 
@@ -200,6 +232,7 @@ export default function PayScreen() {
                 <Text style={styles.amount} accessibilityLabel={`${t('pay.amount')} ${amountToSend(data.amount)}`}>
                   {amountToSend(data.amount)}
                 </Text>
+                {data.discount > 0 && <Text style={styles.discount}>{t('pay.discountApplied', { amount: amountToSend(data.discount) })}</Text>}
               </View>
 
               <Text style={styles.section}>{t('pay.items')}</Text>
@@ -260,9 +293,19 @@ export default function PayScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   loading: { marginTop: spacing.xxl },
+  successDetails: {
+    padding: spacing.md,
+    borderRadius: radius.lg - 4,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 4,
+  },
+  successDetailLine: { fontFamily: fonts.semibold, fontSize: 14, color: colors.text, textAlign: 'center' },
   amountCard: { padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.bgTint, alignItems: 'center', marginBottom: spacing.md },
   amountLabel: { fontFamily: fonts.semibold, fontSize: 14, color: colors.textMuted },
   amount: { marginTop: 2, fontFamily: fonts.extrabold, fontSize: 38, color: colors.text, letterSpacing: -1 },
+  discount: { marginTop: 4, fontFamily: fonts.semibold, fontSize: 13, color: colors.limeInk },
   section: { marginTop: spacing.md, marginBottom: spacing.sm, fontFamily: fonts.bold, fontSize: 16, color: colors.text },
   items: { borderRadius: radius.lg - 4, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.md },
   item: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, paddingVertical: spacing.sm + 2, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },

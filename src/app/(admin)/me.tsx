@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../../components/market/Avatar';
+import { AccountSwitcher } from '../../components/profile/AccountSwitcher';
 import { Button } from '../../components/ui/Button';
 import { Column, TabScroll } from '../../components/ui/TabScroll';
 import { useAuth } from '../../lib/auth';
@@ -16,7 +17,7 @@ export default function AdminMeScreen() {
     setSigningOut(true);
     try {
       await signOut();
-      router.replace('/sign-in');
+      router.replace('/splash');
     } finally {
       setSigningOut(false);
     }
@@ -44,20 +45,49 @@ export default function AdminMeScreen() {
           You manage the catalog and prices, work the order queue, and credit customer balances.
         </Text>
 
+        {/* Same switcher as the customer Profile: an admin account must be able to switch back too. */}
+        <View style={styles.accounts}>
+          <AccountSwitcher />
+        </View>
+
         <Button
           label="Payment settings"
           variant="outline"
+          icon="credit-card"
           onPress={() => router.push('/payment-settings')}
           style={styles.switch}
         />
         <Button
+          label="Discount codes"
+          variant="outline"
+          icon="tag"
+          onPress={() => router.push('/discount-codes')}
+          style={styles.switch}
+        />
+        <Button
+          label="Wheel prizes"
+          variant="outline"
+          icon="gift"
+          onPress={() => router.push('/wheel-prizes')}
+          style={styles.switch}
+        />
+        <Button
+          label="Spin packages"
+          variant="outline"
+          icon="zap"
+          onPress={() => router.push('/wheel-spin-packages')}
+          style={styles.switch}
+        />
+        <Button
           label="Switch to customer view"
+          icon="repeat"
           onPress={() => router.replace('/shop')}
           style={styles.switch}
         />
         <Button
           label="Sign out"
           variant="outline"
+          icon="log-out"
           onPress={handleSignOut}
           loading={signingOut}
           style={styles.signOut}
@@ -68,6 +98,7 @@ export default function AdminMeScreen() {
 }
 
 const styles = StyleSheet.create({
+  accounts: { marginBottom: spacing.md },
   identity: {
     flexDirection: 'row',
     alignItems: 'center',

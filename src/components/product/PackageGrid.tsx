@@ -7,7 +7,9 @@ import type { PackageState } from '../../lib/regionMatch';
 import { useT } from '../../lib/i18n';
 import type { PackageGroup, PackageView } from '../../lib/productView';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
+import type { HighlightBinding } from '../../lib/useScrollToHighlight';
 import { FeatherIcon } from '../art/FeatherIcon';
+import { HighlightTarget } from '../ui/HighlightTarget';
 import { MAX_COLUMN_WIDTH } from '../ui/TabScroll';
 
 const GAP = 10;
@@ -18,6 +20,8 @@ type Props = {
   selectedId: string | null;
   onSelect: (id: string) => void;
   stateOf: (pkg: PackageView) => PackageState;
+  /** A pack to scroll to and glow once (from a tapped notification). */
+  highlight?: HighlightBinding;
 };
 
 /** Two cards per row, so every card in a row can be exactly as tall as the tallest one. */
@@ -28,7 +32,7 @@ function inRows<T>(items: readonly T[]): T[][] {
 }
 
 /** Packages under their group headings. */
-export function PackageGrid({ groups, selectedId, onSelect, stateOf }: Props) {
+export function PackageGrid({ groups, selectedId, onSelect, stateOf, highlight }: Props) {
   const { width } = useWindowDimensions();
   const cardWidth = Math.floor((Math.min(width, MAX_COLUMN_WIDTH) - spacing.lg * 2 - GAP * (PER_ROW - 1)) / PER_ROW);
 
@@ -44,14 +48,15 @@ export function PackageGrid({ groups, selectedId, onSelect, stateOf }: Props) {
           {inRows(group.packages).map((row) => (
             <View key={row[0].id} style={styles.row}>
               {row.map((pkg) => (
-                <PackageCard
-                  key={pkg.id}
-                  pkg={pkg}
-                  width={cardWidth}
-                  selected={pkg.id === selectedId}
-                  state={stateOf(pkg)}
-                  onSelect={onSelect}
-                />
+                <HighlightTarget key={pkg.id} id={pkg.id} binding={highlight} radius={radius.md}>
+                  <PackageCard
+                    pkg={pkg}
+                    width={cardWidth}
+                    selected={pkg.id === selectedId}
+                    state={stateOf(pkg)}
+                    onSelect={onSelect}
+                  />
+                </HighlightTarget>
               ))}
             </View>
           ))}
@@ -159,6 +164,7 @@ const styles = StyleSheet.create({
   // Every card in a row stretches to the tallest one.
   row: { flexDirection: 'row', alignItems: 'stretch', gap: GAP, marginBottom: GAP },
   card: {
+    flexGrow: 1,
     minHeight: 96,
     borderRadius: radius.md,
     backgroundColor: colors.surface,

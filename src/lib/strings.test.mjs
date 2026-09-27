@@ -24,7 +24,7 @@ describe('the two dictionaries agree', () => {
 
 describe('what is still English in Amharic is exactly what is listed for review', () => {
   // Legitimately identical: brand names, an example email, and similar.
-  const SAME_ON_PURPOSE = new Set(['auth.emailPlaceholder']);
+  const SAME_ON_PURPOSE = new Set(['auth.emailPlaceholder', 'account.google', 'gift.email.placeholder']);
   const stillEnglish = KEYS.filter((k) => !hasEthiopic(am[k]) && !SAME_ON_PURPOSE.has(k));
 
   it('every English placeholder is on the review list (so none is forgotten or mistaken for a translation)', () => {
@@ -64,10 +64,20 @@ describe('the app opens in Amharic and remembers the choice', () => {
     assert.match(i18n, /AsyncStorage\.setItem\(STORAGE_KEY, next\)/);
     assert.ok(!/profile\?\.language/.test(i18n), "a profile's default must not override the device (that is how English would win on first open)");
   });
-  it('the አማ/EN pill is in the header of the shop, orders, vault, profile, and the welcome / sign-in / sign-up / splash screens', () => {
-    for (const f of ['src/app/(customer)/shop.tsx', 'src/app/(customer)/orders.tsx', 'src/app/(customer)/vault.tsx', 'src/app/(customer)/profile.tsx', 'src/app/welcome.tsx', 'src/app/splash.tsx', 'src/components/ui/AuthLayout.tsx']) {
+  it('the አማ/EN pill is in the header of orders, vault, profile, and the sign-in / sign-up / splash screens', () => {
+    for (const f of ['src/app/(customer)/orders.tsx', 'src/app/(customer)/vault.tsx', 'src/app/(customer)/profile.tsx', 'src/app/splash.tsx', 'src/components/ui/AuthLayout.tsx']) {
       assert.match(read(f), /<LanguagePill \/>/, f);
     }
+  });
+  it('the shop header (redesigned) carries the language control through LanguageButton, not the two-segment pill', () => {
+    const shop = read('src/app/(customer)/shop.tsx');
+    assert.match(shop, /<ShopHeader\b/);
+    assert.ok(!/LanguagePill/.test(shop), 'the shop header uses LanguageButton, not LanguagePill directly');
+    const header = read('src/components/header/ShopHeader.tsx');
+    assert.match(header, /<LanguageButton\b/);
+    const button = read('src/components/header/LanguageButton.tsx');
+    assert.match(button, /setLanguage\(next\)/);
+    assert.ok(button.includes('አማ') && button.includes('EN'));
   });
   it('the pill switches at once (no navigation) and labels both languages in their own script', () => {
     const pill = read('src/components/ui/LanguagePill.tsx');
@@ -76,7 +86,7 @@ describe('the app opens in Amharic and remembers the choice', () => {
     assert.ok(!/router\./.test(pill));
   });
   it('sign-in and sign-up no longer hold English text of their own', () => {
-    for (const f of ['src/app/sign-in.tsx', 'src/app/sign-up.tsx', 'src/app/welcome.tsx']) {
+    for (const f of ['src/app/sign-in.tsx', 'src/app/sign-up.tsx']) {
       const text = read(f);
       assert.ok(!/label="(Login|Sign up|Sign Up|Go to login)"/.test(text), f);
       assert.match(text, /useT\(\)/, f);

@@ -52,13 +52,17 @@ describe('the admin payment trail', () => {
 });
 
 describe('the fulfilment slot', () => {
-  it('older direct purchases carry a real delivery status', () => {
+  it('carries a real delivery status through the whole funnel', () => {
     assert.deepEqual(fulfilmentOf('pending').steps.map((s) => s.state), ['done', 'current', 'todo']);
     assert.deepEqual(fulfilmentOf('processing').steps.map((s) => s.state), ['done', 'done', 'todo']);
     assert.deepEqual(fulfilmentOf('completed').steps.map((s) => s.state), ['done', 'done', 'done']);
   });
-  it('a merely-paid order has NO delivery status yet, and says so instead of inventing one', () => {
-    for (const s of ['paid', 'pending_payment', 'payment_mismatch', 'cancelled', 'failed', 'refunded']) assert.deepEqual(fulfilmentOf(s), { tracked: false, steps: [] }, s);
+  it('a "paid" order (bank transfer or instant wallet payment) is the same starting point as "pending" (2026-09-23 fix: it used to have no delivery status at all)', () => {
+    assert.deepEqual(fulfilmentOf('paid'), fulfilmentOf('pending'));
+    assert.deepEqual(fulfilmentOf('paid').steps.map((s) => s.state), ['done', 'current', 'todo']);
+  });
+  it('anything else has NO delivery status, and says so instead of inventing one', () => {
+    for (const s of ['pending_payment', 'payment_mismatch', 'cancelled', 'failed', 'refunded']) assert.deepEqual(fulfilmentOf(s), { tracked: false, steps: [] }, s);
   });
 });
 

@@ -170,7 +170,7 @@ export type Shop2TopupClient = ReturnType<typeof createShop2TopupClient>;
  * "the supplier checks the ID"; every other game falls back to the customer's tick, exactly like Blood Strike. Add a game here
  * only after seeing a real successful check for it.
  */
-export const VALIDATED_GAMES: readonly string[] = ['Free Fire', 'PUBG Mobile', 'Mobile Legends: Bang Bang', 'Blood Strike'];
+export const VALIDATED_GAMES: readonly string[] = ['Free Fire', 'PUBG Mobile', 'Mobile Legends: Bang Bang', 'Blood Strike', 'Delta Force Mobile'];
 
 /**
  * Games whose ID check answers with the player's name but NO account region (seen live: PUBG Mobile, Blood Strike). A region

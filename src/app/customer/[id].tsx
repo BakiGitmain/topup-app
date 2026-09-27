@@ -13,12 +13,14 @@ import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { STATUS_LABELS_EN } from '../../components/ui/StatusBadge';
 import { Column } from '../../components/ui/TabScroll';
 import { TextField } from '../../components/ui/TextField';
+import { Toggle } from '../../components/ui/Toggle';
 import { FeatherIcon } from '../../components/art/FeatherIcon';
 import {
   adjustBalance,
   adminErrorMessage,
   fetchCustomer,
   fetchCustomerOrders,
+  setContentCreator,
   type QueueOrder,
 } from '../../lib/admin';
 import { useAuth } from '../../lib/auth';
@@ -50,6 +52,8 @@ export default function CustomerDetailScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<QueueOrder | null>(null);
+  const [creatorBusy, setCreatorBusy] = useState(false);
+  const [creatorError, setCreatorError] = useState<string | null>(null);
 
   if (!initializing && !session) return <Redirect href="/sign-in" />;
   if (!initializing && !isAdmin) return <Redirect href="/shop" />;
@@ -59,7 +63,7 @@ export default function CustomerDetailScreen() {
   const label = person?.display_name || person?.email || 'Customer';
 
   async function submit() {
-    if (!person || parsed === null) return;
+    if (!person || parsed === null || note.trim().length === 0) return;
     setError(null);
     setBusy(true);
     try {
@@ -72,6 +76,21 @@ export default function CustomerDetailScreen() {
       setError(adminErrorMessage(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function toggleCreator(next: boolean) {
+    if (!person) return;
+    setCreatorError(null);
+    setCreatorBusy(true);
+    try {
+      await setContentCreator(person.id, next);
+      toast(next ? 'Marked as a content creator' : 'No longer a content creator');
+      customer.reload();
+    } catch (err) {
+      setCreatorError(adminErrorMessage(err));
+    } finally {
+      setCreatorBusy(false);
     }
   }
 
@@ -159,10 +178,10 @@ export default function CustomerDetailScreen() {
                 error={amount.length > 0 && parsed === null ? 'Enter an amount above 0' : null}
               />
               <TextField
-                label="Note (only you and the customer see it)"
+                label="Reason (required — only you and the customer see it)"
                 value={note}
                 onChangeText={setNote}
-                placeholder="e.g. Telebirr payment"
+                placeholder="e.g. Refund — order #1A2B3C4D"
                 maxLength={120}
                 editable={!busy}
               />
@@ -180,8 +199,23 @@ export default function CustomerDetailScreen() {
                 variant={mode === 'add' ? 'solid' : 'dark'}
                 onPress={submit}
                 loading={busy}
-                disabled={parsed === null}
+                disabled={parsed === null || note.trim().length === 0}
               />
+
+              {/* Content creator */}
+              <Text style={styles.section}>Content creator</Text>
+              <View style={styles.creatorRow}>
+                <View style={styles.creatorText}>
+                  <Text style={styles.creatorLabel}>Can be assigned discount codes and earns commission</Text>
+                </View>
+                <Toggle
+                  value={person.is_content_creator}
+                  onValueChange={toggleCreator}
+                  label="Content creator"
+                  disabled={creatorBusy}
+                />
+              </View>
+              {creatorError ? <ErrorBanner message={creatorError} /> : null}
 
               {/* Orders */}
               <Text style={styles.section}>Orders</Text>
@@ -261,4 +295,16 @@ const styles = StyleSheet.create({
   segmentTextOn: { color: colors.primaryText },
   empty: { fontFamily: fonts.regular, fontSize: 14.5, color: colors.textMuted },
   list: { gap: spacing.sm + 2 },
+  creatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md - 2,
+    borderRadius: radius.lg - 4,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  creatorText: { flex: 1 },
+  creatorLabel: { fontFamily: fonts.medium, fontSize: 13.5, lineHeight: 19, color: colors.textMuted },
 });

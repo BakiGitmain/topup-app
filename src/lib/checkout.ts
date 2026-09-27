@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { triggerFulfillment } from './fulfillment';
 import { isProviderId, parseVerifyAnswer, type ProviderId, type VerifyAnswer } from './paymentView';
 import { parseStoredOrderId, pendingOrderKey, pickResumeOrder } from './resume';
 import { supabase } from './supabase';
@@ -12,20 +13,35 @@ export type CreatedOrder = {
   paid: boolean;
   /** The wallet balance after checkout. */
   balance: number;
+  /** Birr taken off by a redeemed discount code, if one was entered. 0 if none. */
+  discount: number;
 };
 
 /**
  * Re-checks the WHOLE cart against the live catalog and, only if every line is fine, creates the order and empties the
  * cart, in one database step. All or nothing. If the wallet balance covers the whole total the order is paid from it in
  * that same step (paid: true); otherwise it is left unpaid for the Telebirr/CBE flow (paid: false). Throws the database's
- * refusal: read it with parseCheckoutError (which lines are gone, which IDs need fixing, or which unpaid order to resume).
+ * refusal: read it with parseCheckoutError (which lines are gone, which IDs need fixing, which unpaid order to resume,
+ * or what was wrong with the discount code). A code and a wheel prize never both apply -- the caller passes at
+ * most one; passing both is a client bug and the database rejects it (multiple_discounts_not_allowed).
  */
-export async function createCartOrder(): Promise<CreatedOrder> {
-  const { data, error } = await supabase.rpc('checkout_cart');
+export async function createCartOrder(code?: string | null, wheelPrizeWonId?: string | null): Promise<CreatedOrder> {
+  const { data, error } = await supabase.rpc('checkout_cart', {
+    p_code: code?.trim() || null,
+    p_wheel_prize_won_id: wheelPrizeWonId || null,
+  });
   if (error) throw error;
-  const d = data as { order_id?: unknown; amount?: unknown; items?: unknown; paid?: unknown; balance?: unknown } | null;
+  const d = data as { order_id?: unknown; amount?: unknown; items?: unknown; paid?: unknown; balance?: unknown; discount?: unknown } | null;
   if (!d || typeof d.order_id !== 'string') throw new Error('checkout_failed');
-  return { orderId: d.order_id, amount: Number(d.amount), items: Number(d.items), paid: d.paid === true, balance: Number(d.balance ?? 0) };
+  if (d.paid === true) triggerFulfillment(d.order_id);
+  return {
+    orderId: d.order_id,
+    amount: Number(d.amount),
+    items: Number(d.items),
+    paid: d.paid === true,
+    balance: Number(d.balance ?? 0),
+    discount: Number(d.discount ?? 0),
+  };
 }
 
 /** Closes the customer's own unpaid order; its lines go back in the cart. */
@@ -54,6 +70,13 @@ export type PayOrder = {
   amount: number;
   createdAt: string;
   items: PayItem[];
+  /** 'code' = something lands in the Vault; 'topup' = nothing does (credited straight to a game account). Decides
+   * where the "Payment confirmed" screen sends the customer next -- see pay/[id].tsx. */
+  fulfillment: 'code' | 'topup';
+  /** Birr taken off by a discount code entered at checkout. 0 if none was used. */
+  discount: number;
+  /** A gift or redeem-code order (Profile > Gift): once paid, it leads to the gift's done screen, not the Vault. */
+  giftKind: 'gift' | 'redeem_code' | null;
 };
 
 type ItemRow = {
@@ -70,7 +93,7 @@ type ItemRow = {
 export async function fetchPayOrder(userId: string, orderId: string): Promise<PayOrder | null> {
   const { data: order, error } = await supabase
     .from('orders')
-    .select('id, status, amount, created_at, payment_provider')
+    .select('id, status, amount, created_at, payment_provider, fulfillment, discount_amount, gift_kind, product_name, option_label')
     .eq('user_id', userId)
     .eq('id', orderId)
     .maybeSingle();
@@ -90,7 +113,13 @@ export async function fetchPayOrder(userId: string, orderId: string): Promise<Pa
     provider: (order.payment_provider as string | null) ?? null,
     amount: Number(order.amount),
     createdAt: order.created_at as string,
-    items: ((items ?? []) as unknown as ItemRow[]).map((i) => ({
+    fulfillment: order.fulfillment === 'code' ? 'code' : 'topup',
+    discount: Number(order.discount_amount ?? 0),
+    giftKind: order.gift_kind === 'gift' || order.gift_kind === 'redeem_code' ? order.gift_kind : null,
+    // A gift order is one pack with no order lines (nothing to go back into the cart): shown as its single line.
+    items: (items ?? []).length === 0 && order.gift_kind
+      ? [{ id: order.id as string, productName: order.product_name as string, optionLabel: order.option_label as string, quantity: 1, unitPrice: Number(order.amount), lineTotal: Number(order.amount), ids: [], playerName: null }]
+      : ((items ?? []) as unknown as ItemRow[]).map((i) => ({
       id: i.id,
       productName: i.product_name,
       optionLabel: i.option_label,

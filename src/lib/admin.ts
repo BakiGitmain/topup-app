@@ -18,6 +18,13 @@ export function adminErrorMessage(error: unknown): string {
   if (message.includes('code_already_delivered')) return "The code was already delivered, so it can't be refunded.";
   if (message.includes('insufficient_balance')) return 'That would take the balance below zero.';
   if (message.includes('forbidden')) return "You don't have admin access.";
+  if (message.includes('creator_not_content_creator')) return "That person isn't a content creator. Turn that on for them first, then assign the code.";
+  if (message.includes('discount_codes_discount_percent_check')) return 'The discount must be more than 0% and at most 90% (a 100% code could zero out an order, which cannot be paid).';
+  if (message.includes('discount_codes_commission_percent_check')) return 'The commission must be between 0% and 100%.';
+  if (message.includes('discount_codes_products_not_empty')) return 'Pick at least one product, or leave it open to every product.';
+  if (message.includes('discount_codes_code_ci_idx') || message.includes('discount_codes_code_key')) return "That code is already in use (codes aren't case-sensitive, so SAVE10 and save10 are the same code).";
+  if (message.includes('not_updated')) return "That change wasn't saved. You may not have admin access, or the code was removed. Pull to refresh and try again.";
+  if (message.includes('row-level security') || message.includes('permission denied')) return "You don't have admin access.";
   return 'Something went wrong. Please try again.';
 }
 
@@ -49,10 +56,14 @@ function toQueueOrder(row: QueueRow): QueueOrder {
 
 /** Oldest first for open work (so the longest wait is on top), newest first otherwise. */
 export async function fetchQueue(filter: QueueFilter): Promise<QueueOrder[]> {
-  const base = supabase.from('orders').select(QUEUE_COLUMNS);
+  // Never a gift or redeem-code order (orders.gift_kind): those are delivered only when the gift is claimed, never
+  // worked by hand, and the database refuses to move them anyway. Order search below still finds them.
+  const base = supabase.from('orders').select(QUEUE_COLUMNS).is('gift_kind', null);
   const request =
+    // 'paid' (bank transfer or instant wallet payment) is an equally valid, un-worked-on order, same as 'pending'
+    // (the older direct-purchase path's default status) -- both show here, admin_deliver_order accepts either.
     filter === 'pending'
-      ? base.eq('status', 'pending').order('created_at', { ascending: true }).limit(100)
+      ? base.in('status', ['pending', 'paid']).order('created_at', { ascending: true }).limit(100)
       : filter === 'processing'
         ? base.eq('status', 'processing').order('created_at', { ascending: true }).limit(100)
         : filter === 'done'
@@ -123,7 +134,8 @@ export async function fetchPendingCount(): Promise<number> {
   const { count, error } = await supabase
     .from('orders')
     .select('id', { count: 'exact', head: true })
-    .eq('status', 'pending');
+    .is('gift_kind', null)
+    .in('status', ['pending', 'paid']);
   if (error) throw error;
   return count ?? 0;
 }
@@ -408,6 +420,7 @@ export type Customer = {
   role: 'user' | 'admin';
   created_at: string;
   balance: number;
+  is_content_creator: boolean;
 };
 
 type CustomerRow = Omit<Customer, 'balance'> & {
@@ -423,10 +436,11 @@ function toCustomer(row: CustomerRow): Customer {
     role: row.role,
     created_at: row.created_at,
     balance: wallet ? Number(wallet.balance) : 0,
+    is_content_creator: row.is_content_creator === true,
   };
 }
 
-const CUSTOMER_COLUMNS = 'id, display_name, email, role, created_at, wallets ( balance )';
+const CUSTOMER_COLUMNS = 'id, display_name, email, role, created_at, is_content_creator, wallets ( balance )';
 
 /** Search by email or name. Empty search lists the newest customers. */
 export async function searchCustomers(text: string): Promise<Customer[]> {
@@ -469,3 +483,226 @@ export async function adjustBalance(userId: string, amount: number, note: string
   });
   if (error) throw error;
 }
+
+/** Grants or revokes content-creator status. Does not touch role, wallet, or anything a creator can already do as a customer. */
+export async function setContentCreator(userId: string, value: boolean): Promise<void> {
+  const { error } = await supabase.rpc('admin_set_content_creator', { p_user_id: userId, p_value: value });
+  if (error) throw error;
+}
+
+/** Every current content creator, for the "assign a creator" picker. */
+export async function fetchContentCreators(): Promise<{ id: string; display_name: string; email: string | null }[]> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, display_name, email')
+    .eq('is_content_creator', true)
+    .order('display_name', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as { id: string; display_name: string; email: string | null }[];
+}
+
+// ------------------------------------------------------------ discount codes
+
+export type DiscountCode = {
+  id: string;
+  code: string;
+  creator_id: string;
+  creatorName: string;
+  discount_percent: number;
+  commission_percent: number;
+  /** null = every product. */
+  applicable_products: string[] | null;
+  active: boolean;
+  created_at: string;
+  /** null = never expires. */
+  expires_at: string | null;
+  /** Portal Coins a code-using order earns instead of the flat default. */
+  portal_coin_bonus: number;
+  /** How many times it has actually been redeemed (an order that reached 'completed'), and by how much. */
+  redemptionCount: number;
+  totalDiscount: number;
+  totalCommission: number;
+};
+
+type DiscountCodeRow = {
+  id: string;
+  code: string;
+  creator_id: string;
+  discount_percent: number | string;
+  commission_percent: number | string;
+  applicable_products: string[] | null;
+  active: boolean;
+  created_at: string;
+  expires_at: string | null;
+  portal_coin_bonus: number;
+  creator: { display_name: string } | { display_name: string }[] | null;
+  code_redemptions: { discount_amount: number | string; commission_amount: number | string }[] | null;
+};
+
+const DISCOUNT_CODE_COLUMNS =
+  'id, code, creator_id, discount_percent, commission_percent, applicable_products, active, created_at, expires_at, portal_coin_bonus, creator:profiles!creator_id ( display_name ), code_redemptions ( discount_amount, commission_amount )';
+
+function toDiscountCode(row: DiscountCodeRow): DiscountCode {
+  const creator = Array.isArray(row.creator) ? row.creator[0] : row.creator;
+  const redemptions = row.code_redemptions ?? [];
+  return {
+    id: row.id,
+    code: row.code,
+    creator_id: row.creator_id,
+    creatorName: creator?.display_name || 'Creator',
+    discount_percent: Number(row.discount_percent),
+    commission_percent: Number(row.commission_percent),
+    applicable_products: row.applicable_products,
+    active: row.active,
+    created_at: row.created_at,
+    expires_at: row.expires_at,
+    portal_coin_bonus: Number(row.portal_coin_bonus),
+    redemptionCount: redemptions.length,
+    totalDiscount: redemptions.reduce((sum, r) => sum + Number(r.discount_amount), 0),
+    totalCommission: redemptions.reduce((sum, r) => sum + Number(r.commission_amount), 0),
+  };
+}
+
+export async function fetchDiscountCodes(): Promise<DiscountCode[]> {
+  const { data, error } = await supabase.from('discount_codes').select(DISCOUNT_CODE_COLUMNS).order('created_at', { ascending: false });
+  if (error) throw error;
+  return ((data ?? []) as unknown as DiscountCodeRow[]).map(toDiscountCode);
+}
+
+export type DiscountCodeInput = {
+  code: string;
+  creator_id: string;
+  discount_percent: number;
+  commission_percent: number;
+  /** null = open to every product. */
+  applicable_products: string[] | null;
+  /** null = never expires. */
+  expires_at: string | null;
+  /** Portal Coins a code-using order earns instead of the flat default. */
+  portal_coin_bonus: number;
+};
+
+/** Whitelists exactly the real columns -- callers (the admin form's `validateCodeForm` result) can carry extra
+ * fields like `ok: true`, and spreading those straight into the table caused every create to fail with a raw
+ * "column ok does not exist" (surfaced to the admin as a generic "Something went wrong"). */
+function discountCodeRow(input: DiscountCodeInput) {
+  return {
+    code: input.code.trim(),
+    creator_id: input.creator_id,
+    discount_percent: input.discount_percent,
+    commission_percent: input.commission_percent,
+    applicable_products: input.applicable_products,
+    expires_at: input.expires_at,
+    portal_coin_bonus: input.portal_coin_bonus,
+  };
+}
+
+export async function createDiscountCode(input: DiscountCodeInput): Promise<void> {
+  const { error } = await supabase.from('discount_codes').insert(discountCodeRow(input));
+  if (error) throw error;
+}
+
+export async function updateDiscountCode(id: string, input: DiscountCodeInput & { active: boolean }): Promise<void> {
+  const { data, error } = await supabase
+    .from('discount_codes')
+    .update({ ...discountCodeRow(input), active: input.active })
+    .eq('id', id)
+    .select('id');
+  if (error) throw error;
+  if (!data || data.length === 0) throw new Error('not_updated');
+}
+
+/** The row list's one-tap on/off toggle -- doesn't touch any other field. */
+export async function setDiscountCodeActive(id: string, active: boolean): Promise<void> {
+  const { data, error } = await supabase.from('discount_codes').update({ active }).eq('id', id).select('id');
+  if (error) throw error;
+  if (!data || data.length === 0) throw new Error('not_updated');
+}
+
+/** Every product's id and name, for the "restrict to specific products" picker. Not the heavy admin-product shape. */
+export async function fetchProductPickerList(): Promise<{ id: string; name: string }[]> {
+  const { data, error } = await supabase.from('products').select('id, name').order('name', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as { id: string; name: string }[];
+}
+
+// ------------------------------------------------------------ wheel prizes
+
+export type WheelPrizeRow = {
+  id: string;
+  label: string;
+  discount_birr: number;
+  weight: number;
+  active: boolean;
+  created_at: string;
+};
+
+export async function fetchWheelPrizes(): Promise<WheelPrizeRow[]> {
+  const { data, error } = await supabase
+    .from('wheel_prizes')
+    .select('id, label, discount_birr, weight, active, created_at')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return ((data ?? []) as { id: string; label: string; discount_birr: number | string; weight: number | string; active: boolean; created_at: string }[]).map(
+    (row) => ({ ...row, discount_birr: Number(row.discount_birr), weight: Number(row.weight) })
+  );
+}
+
+export type WheelPrizeInput = { label: string; discount_birr: number; weight: number };
+
+export async function createWheelPrize(input: WheelPrizeInput): Promise<void> {
+  const { error } = await supabase.from('wheel_prizes').insert(input);
+  if (error) throw error;
+}
+
+export async function updateWheelPrize(id: string, input: WheelPrizeInput): Promise<void> {
+  const { data, error } = await supabase.from('wheel_prizes').update(input).eq('id', id).select('id');
+  if (error) throw error;
+  if (!data || data.length === 0) throw new Error('not_updated');
+}
+
+export async function setWheelPrizeActive(id: string, active: boolean): Promise<void> {
+  const { data, error } = await supabase.from('wheel_prizes').update({ active }).eq('id', id).select('id');
+  if (error) throw error;
+  if (!data || data.length === 0) throw new Error('not_updated');
+}
+
+// ------------------------------------------------------------ wheel spin packages
+
+export type WheelSpinPackageRow = {
+  id: string;
+  spins_count: number;
+  portal_coin_cost: number;
+  active: boolean;
+  sort_order: number;
+  created_at: string;
+};
+
+export async function fetchWheelSpinPackages(): Promise<WheelSpinPackageRow[]> {
+  const { data, error } = await supabase
+    .from('wheel_spin_packages')
+    .select('id, spins_count, portal_coin_cost, active, sort_order, created_at')
+    .order('sort_order', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as WheelSpinPackageRow[];
+}
+
+export type WheelSpinPackageInput = { spins_count: number; portal_coin_cost: number; sort_order: number };
+
+export async function createWheelSpinPackage(input: WheelSpinPackageInput): Promise<void> {
+  const { error } = await supabase.from('wheel_spin_packages').insert(input);
+  if (error) throw error;
+}
+
+export async function updateWheelSpinPackage(id: string, input: WheelSpinPackageInput): Promise<void> {
+  const { data, error } = await supabase.from('wheel_spin_packages').update(input).eq('id', id).select('id');
+  if (error) throw error;
+  if (!data || data.length === 0) throw new Error('not_updated');
+}
+
+export async function setWheelSpinPackageActive(id: string, active: boolean): Promise<void> {
+  const { data, error } = await supabase.from('wheel_spin_packages').update({ active }).eq('id', id).select('id');
+  if (error) throw error;
+  if (!data || data.length === 0) throw new Error('not_updated');
+}
+

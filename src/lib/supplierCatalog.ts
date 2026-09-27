@@ -1,5 +1,5 @@
-import type { CatalogFamily, CatalogRow, ImportPayload, LoadOffersOutcome, RefreshOutcome, SupplierName } from './importPlan';
-import { parseLoadOffers, parseRefresh } from './importPlan';
+import type { CatalogFamily, CatalogRow, ImportPayload, LoadOffersOutcome, RefreshOutcome, SearchLiveOutcome, SupplierName, ValidationCandidate } from './importPlan';
+import { parseLoadOffers, parseRefresh, parseSearchLive } from './importPlan';
 import { supabase } from './supabase';
 
 // The saved supplier catalog (public.supplier_catalog). Admins read it directly: row-level security lets
@@ -24,6 +24,53 @@ export async function searchCatalog(text: string, supplier: SupplierName): Promi
   const { data, error } = await request.order('game_name', { ascending: true }).limit(SEARCH_LIMIT);
   if (error) throw error;
   return (data ?? []) as unknown as CatalogRow[];
+}
+
+/**
+ * Every supplier's OWN validated category for a game (from the saved catalog), so the import screen can offer a check from a
+ * DIFFERENT supplier than the one being imported from (FazerCards can be cheaper for Blood Strike while having no check for
+ * it; Shop2Topup can). Gift cards never validate, so this is never called for them. Never throws: an admin who can't reach
+ * this is simply offered no cross-supplier check, same as a game with none.
+ */
+export async function fetchValidationCandidates(gameName: string, family: CatalogFamily): Promise<ValidationCandidate[]> {
+  if (family !== 'topups') return [];
+  const name = cleanQuery(gameName);
+  if (name === '') return [];
+  try {
+    const { data, error } = await supabase
+      .from('supplier_catalog')
+      .select('supplier, validation_category_id, validation_fields, note_region')
+      .eq('family', family)
+      .ilike('game_name', name)
+      .not('validation_category_id', 'is', null)
+      .limit(20);
+    if (error) return [];
+    return ((data ?? []) as { supplier: string; validation_category_id: string | null; validation_fields: unknown; note_region: string | null }[])
+      .filter(
+        (r): r is { supplier: SupplierName; validation_category_id: string; validation_fields: unknown; note_region: string | null } =>
+          (r.supplier === 'fazercards' || r.supplier === 'shop2topup' || r.supplier === 'gamesdrop') && typeof r.validation_category_id === 'string' && Array.isArray(r.validation_fields)
+      )
+      .map((r) => ({
+        supplier: r.supplier,
+        validation_category_id: r.validation_category_id,
+        validation_fields: r.validation_fields as ValidationCandidate['validation_fields'],
+        note_region: r.note_region,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * GamesDrop only (see CLAUDE.md, 2026-09-22): its ~64,000-offer catalog can't be bulk-refreshed (it alone takes
+ * longer than the Edge Function's own timeout), so there is no `refresh_catalog` for it any more. Instead, every
+ * search scopes a live call to GamesDrop's own `search` param and saves just those matches into the same
+ * supplier_catalog table `searchCatalog` reads -- Shop2Topup is untouched and still relies on its bulk refresh.
+ * Never throws: a live-search failure just means the DB read below returns whatever is already cached (possibly
+ * nothing, for a brand-new query), same graceful-degradation shape as a failed refresh.
+ */
+export async function searchLive(supplier: SupplierName, query: string): Promise<SearchLiveOutcome> {
+  return parseSearchLive(await callFunction({ action: 'search_catalog', supplier, query }));
 }
 
 export type CatalogStatus = { categories: number; blocked: number; refreshedAt: string | null; withPacks: number };

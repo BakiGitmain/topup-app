@@ -16,13 +16,14 @@ import { colors, fonts, spacing } from '../lib/theme';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function SignUpScreen() {
-  const { signUp } = useAuth();
+  const { signUp, signInWithGoogle } = useAuth();
   const t = useT();
 
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState({
@@ -48,7 +49,8 @@ export default function SignUpScreen() {
     displayName.trim().length >= 2 &&
     EMAIL_RE.test(email.trim()) &&
     password.length >= 8 &&
-    !submitting;
+    !submitting &&
+    !googleBusy;
 
   async function handleSignUp() {
     if (!canSubmit) return;
@@ -74,8 +76,20 @@ export default function SignUpScreen() {
     }
   }
 
-  function notReady() {
-    setError(t('auth.notReady'));
+  async function handleGoogle() {
+    if (googleBusy || submitting) return;
+    setError(null);
+    setGoogleBusy(true);
+    try {
+      await signInWithGoogle();
+      // Same one button, same destination whether this turns out to be a new account or an existing one --
+      // index.tsx's own gate (needs_username) decides what the customer sees next.
+      router.replace('/');
+    } catch (err) {
+      if (!(err instanceof Error && err.message === 'cancelled')) setError(t('auth.googleFailed'));
+    } finally {
+      setGoogleBusy(false);
+    }
   }
 
   if (confirmEmail) {
@@ -148,7 +162,7 @@ export default function SignUpScreen() {
         style={styles.submit}
       />
 
-      <SocialAuth dividerLabel={t('auth.orSignUp')} onPress={notReady} />
+      <SocialAuth dividerLabel={t('auth.orSignUp')} onPress={handleGoogle} loading={googleBusy} />
 
       <AuthFooter
         prompt={t('auth.haveAccount')}

@@ -8,6 +8,10 @@ export type RegionView = {
   buyerFields: BuyerField[];
   idValidation: 'supplier' | 'none';
   sortOrder: number;
+  /** Override for the generic "Your player ID" section title/hint above the buyer form (e.g. Telegram's "Your
+   * Telegram username"). Null uses the generic, per-game copy every other product already shows. */
+  idSectionTitle: string | null;
+  idSectionHint: string | null;
 };
 
 export type PackageView = {

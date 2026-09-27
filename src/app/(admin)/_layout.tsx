@@ -49,7 +49,7 @@ export default function AdminTabsLayout() {
       </View>
     );
   }
-  if (!session) return <Redirect href="/sign-in" />;
+  if (!session) return <Redirect href="/splash" />;
   if (!isAdmin) return <Redirect href="/shop" />;
 
   return (

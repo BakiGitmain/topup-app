@@ -154,6 +154,52 @@ describe('refresh_catalog', () => {
   });
 });
 
+describe('search_catalog', () => {
+  const searchDeps = (rows = TOPUP_CATS, overrides = {}) => ({ searchLive: async (family) => (family === 'topups' ? rows : []), ...overrides });
+
+  it('is refused (400) for a supplier with no searchLive, so Shop2Topup is untouched by this action', async () => {
+    const { call, calls } = setup();
+    assert.equal((await call({ action: 'search_catalog', query: 'free fire' })).status, 400);
+    assert.equal(calls.upsert.length, 0);
+  });
+  it('rejects a query under 2 letters or over 60, without calling the supplier', async () => {
+    const seen = [];
+    const { call } = setup({ searchLive: async (f, q) => { seen.push(q); return []; } });
+    for (const query of [undefined, '', 'a', 'x'.repeat(61)]) {
+      assert.equal((await call({ action: 'search_catalog', query })).status, 400);
+    }
+    assert.equal(seen.length, 0);
+  });
+  it('saves just what the query matched, tagged and normalized the same way as a refresh, and never deletes anything', async () => {
+    const { call, calls } = setup(searchDeps());
+    const { status, body } = await read(await call({ action: 'search_catalog', query: 'free fire' }));
+    assert.equal(status, 200);
+    assert.deepEqual(body, { status: 'ok', categories: 4, topups: 4, giftcards: 0 });
+    assert.equal(calls.upsert.length, 4);
+    assert.equal(calls.deleted.length, 0, 'a scoped search must never delete categories outside its own query');
+    assert.equal(calls.counted, 0, 'no "did the catalog shrink" check either: there is no whole catalog to compare against');
+  });
+  it('zero matches is a normal, successful outcome (not "suspicious" the way an empty refresh is)', async () => {
+    const { call, calls } = setup(searchDeps([]));
+    const { body } = await read(await call({ action: 'search_catalog', query: 'zzzznonexistent' }));
+    assert.deepEqual(body, { status: 'ok', categories: 0, topups: 0, giftcards: 0 });
+    assert.equal(calls.upsert.length, 0);
+  });
+  it('a slow or refused supplier reports unavailable and changes nothing, same as refresh', async () => {
+    const { call, calls } = setup(searchDeps(undefined, { searchLive: () => new Promise(() => {}) }));
+    assert.deepEqual((await read(await call({ action: 'search_catalog', query: 'free fire' }))).body, { status: 'unavailable', reason: 'timeout' });
+    assert.equal(calls.upsert.length, 0);
+
+    const refused = setup(searchDeps(undefined, { searchLive: async () => { throw Object.assign(new Error('nope'), { status: 403 }); } }));
+    assert.deepEqual((await read(await refused.call({ action: 'search_catalog', query: 'free fire' }))).body, { status: 'unavailable', reason: 'refused' });
+  });
+  it('a customer is refused before the supplier is ever called', async () => {
+    const { call, calls } = setup(searchDeps());
+    assert.equal((await call({ action: 'search_catalog', query: 'free fire' }, { token: 'user-token' })).status, 403);
+    assert.equal(calls.upsert.length, 0);
+  });
+});
+
 describe('load_offers', () => {
   const ask = (call, extra = {}) => call({ action: 'load_offers', family: 'topups', category_id: 'free_fire_mena', ...extra });
 

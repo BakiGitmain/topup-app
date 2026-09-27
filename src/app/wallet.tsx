@@ -1,6 +1,6 @@
 import { Redirect, router } from 'expo-router';
 import { useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FeatherIcon, type FeatherName } from '../components/art/FeatherIcon';
@@ -23,6 +23,8 @@ const TX_ICONS: Record<TransactionKind, FeatherName> = {
   refund: 'rotate-ccw',
   adjustment: 'edit-2',
   withdrawal: 'arrow-up-right',
+  portal_coin_redemption: 'star',
+  commission: 'tag',
 };
 
 /** The wallet: balance, Deposit / Withdraw, what is waiting, and every line of the ledger. */
@@ -108,7 +110,9 @@ export default function WalletScreen() {
           )}
 
           <Text style={styles.section}>{t('wallet.history')}</Text>
-          {history.status === 'error' && !history.data ? (
+          {history.status === 'loading' && !history.data ? (
+            <ActivityIndicator style={styles.loading} color={colors.limeDeep} />
+          ) : history.status === 'error' && !history.data ? (
             <Text style={styles.empty}>{t('common.loadError')}</Text>
           ) : history.data && transactions.length === 0 ? (
             <Text style={styles.empty}>{t('wallet.noHistory')}</Text>
@@ -148,6 +152,7 @@ export default function WalletScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
+  loading: { marginTop: spacing.lg },
   card: { padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.bgTint, borderWidth: 1, borderColor: colors.limeSoft },
   cardLabel: { fontFamily: fonts.medium, fontSize: 14, color: colors.textMuted },
   cardAmount: { marginTop: 2, fontFamily: fonts.extrabold, fontSize: 36, color: colors.limeDark, letterSpacing: -1 },

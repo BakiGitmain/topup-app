@@ -1,7 +1,7 @@
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { useT } from '../../lib/i18n';
-import { AppleIcon, GoogleIcon } from '../art/Icons';
+import { GoogleIcon } from '../art/Icons';
 import { SocialButton } from './SocialButton';
 import { colors, fonts, spacing } from '../../lib/theme';
 
@@ -9,10 +9,11 @@ type Props = {
   /** Divider text, e.g. "or sign up with". */
   dividerLabel: string;
   onPress: () => void;
+  loading?: boolean;
 };
 
-/** "or ..." divider plus the Google button (and Apple on iOS). */
-export function SocialAuth({ dividerLabel, onPress }: Props) {
+/** "or ..." divider plus the Google button. Google is the only third-party sign-in method right now. */
+export function SocialAuth({ dividerLabel, onPress, loading }: Props) {
   const t = useT();
   return (
     <View>
@@ -27,14 +28,8 @@ export function SocialAuth({ dividerLabel, onPress }: Props) {
           label={t('auth.google')}
           icon={<GoogleIcon />}
           onPress={onPress}
+          loading={loading}
         />
-        {Platform.OS === 'ios' ? (
-          <SocialButton
-            label={t('auth.apple')}
-            icon={<AppleIcon color={colors.text} />}
-            onPress={onPress}
-          />
-        ) : null}
       </View>
     </View>
   );

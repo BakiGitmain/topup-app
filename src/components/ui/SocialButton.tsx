@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 
 import { colors, fonts, radius } from '../../lib/theme';
 
@@ -7,17 +7,22 @@ type Props = {
   label: string;
   icon: ReactNode;
   onPress: () => void;
+  loading?: boolean;
+  disabled?: boolean;
 };
 
-export function SocialButton({ label, icon, onPress }: Props) {
+export function SocialButton({ label, icon, onPress, loading, disabled }: Props) {
+  const blocked = !!loading || !!disabled;
   return (
     <Pressable
       onPress={onPress}
+      disabled={blocked}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+      accessibilityState={{ disabled: blocked, busy: !!loading }}
+      style={({ pressed }) => [styles.button, blocked && styles.blocked, pressed && !blocked && styles.pressed]}
     >
-      {icon}
+      {loading ? <ActivityIndicator size="small" color={colors.text} /> : icon}
       <Text style={styles.label}>{label}</Text>
     </Pressable>
   );
@@ -37,6 +42,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   pressed: { backgroundColor: colors.surface },
+  blocked: { opacity: 0.6 },
   label: {
     fontFamily: fonts.semibold,
     fontSize: 15,

@@ -16,6 +16,7 @@ import { fetchPayOrder } from '../../lib/checkout';
 import { useT } from '../../lib/i18n';
 import { receiptAvailable } from '../../lib/orderView';
 import { fetchOrder, type Order } from '../../lib/orders';
+import { fetchPortalCoinEarned } from '../../lib/portalCoin';
 import { shareReceiptImage } from '../../lib/receiptShare';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
 import { useAsync } from '../../lib/useAsync';
@@ -43,6 +44,9 @@ export default function OrderDetailScreen() {
     id ?? '',
     !initializing && !!userId && !!id
   );
+
+  const completed = order.data?.status === 'completed';
+  const coinsEarned = useAsync(() => (completed ? fetchPortalCoinEarned(id) : Promise.resolve(null)), id ?? '', completed);
 
   if (!initializing && !session) return <Redirect href="/sign-in" />;
 
@@ -89,6 +93,13 @@ export default function OrderDetailScreen() {
               </View>
 
               <ReceiptCard ref={receiptRef} order={data} items={lines.data} t={t} />
+
+              {coinsEarned.data !== null && coinsEarned.data > 0 && (
+                <View style={styles.coinBadge}>
+                  <FeatherIcon name="star" size={14} color={colors.limeDark} />
+                  <Text style={styles.coinText}>{t('portalCoin.earned', { n: String(coinsEarned.data) })}</Text>
+                </View>
+              )}
 
               {canDownload ? (
                 <Button label={t('receipt.download')} onPress={download} loading={sharing} style={styles.cta} />
@@ -142,5 +153,7 @@ const styles = StyleSheet.create({
   noteCard: { padding: spacing.md, borderRadius: radius.lg - 4, backgroundColor: colors.bgTint, marginBottom: spacing.md },
   note: { fontFamily: fonts.medium, fontSize: 14.5, lineHeight: 21, color: colors.text },
   cta: { marginTop: spacing.md },
+  coinBadge: { flexDirection: 'row', alignSelf: 'center', alignItems: 'center', gap: 6, marginTop: spacing.sm, paddingHorizontal: spacing.sm + 2, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.limeSoft },
+  coinText: { fontFamily: fonts.bold, fontSize: 13, color: colors.limeDark },
   notYet: { marginTop: spacing.md, textAlign: 'center', fontFamily: fonts.medium, fontSize: 13.5, lineHeight: 20, color: colors.textMuted },
 });

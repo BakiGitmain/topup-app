@@ -72,6 +72,12 @@ export function nextStep(answer: VerifyAnswer): Next {
 /** The order statuses that mean "nothing more to enter here". */
 export const isSettled = (status: string) => status !== 'pending_payment';
 
+/** The payment genuinely succeeded -- 'paid' is only the FIRST success status; fulfilment can move an order on to
+ * 'processing' or 'completed' before the customer ever reopens this screen (auto-fulfilment, or an admin
+ * delivering it). All three must show a success screen, never the neutral "no longer waiting for payment" state a
+ * cancelled/failed/refunded order gets -- those are also `isSettled`, but never a success. */
+export const isPaymentSuccess = (status: string) => status === 'paid' || status === 'processing' || status === 'completed';
+
 /** "Br 1,250" for the amount to send: exact, no rounding surprises. */
 export function amountToSend(amount: number): string {
   const fixed = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);

@@ -35,7 +35,7 @@ import {
   type Blocker,
 } from '../../lib/idValidation';
 import { fetchLastFields } from '../../lib/orders';
-import { formatBirr } from '../../lib/pricing';
+import { formatBirr, priceDisplay } from '../../lib/pricing';
 import { fetchProductPage, type ProductDetail } from '../../lib/productPage';
 import {
   categoryFilter,
@@ -51,6 +51,10 @@ import { colors, fonts, radius, spacing } from '../../lib/theme';
 import { useToast } from '../../lib/toast';
 import { useAsync } from '../../lib/useAsync';
 import { useIdValidation } from '../../lib/useIdValidation';
+import { useScrollContainer, useScrollToHighlight } from '../../lib/useScrollToHighlight';
+import { checkoutGift, giftCheckoutError } from '../../lib/gift';
+import { readGiftParams, type GiftRouteParams } from '../../lib/giftMode';
+import { GiftBanner } from '../../components/gift/GiftBanner';
 
 const BLOCKER_TEXT: Record<Blocker, Parameters<ReturnType<typeof useT>>[0]> = {
   choose_package: 'product.blocker.choose',
@@ -66,11 +70,17 @@ const BLOCKER_TEXT: Record<Blocker, Parameters<ReturnType<typeof useT>>[0]> = {
 };
 
 export default function ProductScreen() {
-  const { id, optionId, accountId } = useLocalSearchParams<{
+  const { id, optionId, accountId, highlight, hl, giftKind, giftTo, giftToName } = useLocalSearchParams<{
     id: string;
     optionId?: string;
     accountId?: string;
-  }>();
+    /** A pack to scroll to and glow once (a tapped "on sale" notification), and the tap's token. */
+    highlight?: string;
+    hl?: string;
+  } & GiftRouteParams>();
+  // Gift mode (Profile > Gift): the same page and packs, but no player ID (the recipient gives it at claim time), no
+  // cart, and the button buys the pack as a gift or a redeem code (checkout_gift).
+  const gift = readGiftParams({ giftKind, giftTo, giftToName });
   const { user, session, initializing } = useAuth();
   const t = useT();
   const insets = useSafeAreaInsets();
@@ -91,6 +101,11 @@ export default function ProductScreen() {
   const [lastFields, setLastFields] = useState<Record<string, string> | null>(null);
   const [ticked, setTicked] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // The pack a notification pointed at keeps deciding the starting region and category after its route param is
+  // cleared (it is cleared once highlighted, so a revisit never glows again).
+  const [focusPackId, setFocusPackId] = useState<string | null>(highlight ?? null);
+  if (highlight && highlight !== focusPackId) setFocusPackId(highlight);
+  const scroll = useScrollContainer();
 
   // Pre-fill from the last order for this product; Buy again's own value wins for the first field.
   const userId = user?.id;
@@ -118,22 +133,37 @@ export default function ProductScreen() {
   const allPackages = data?.packages ?? [];
 
   const wanted = regionChoice && regions.some((r) => r.id === regionChoice) ? regionChoice : null;
-  const activeRegionId = wanted ?? initialRegionId(regions, allPackages, optionId);
+  const activeRegionId = wanted ?? initialRegionId(regions, allPackages, optionId ?? focusPackId);
   const region = regions.find((r) => r.id === activeRegionId) ?? null;
   const packages = packagesInRegion(allPackages, region?.id ?? null);
 
   // Category pills (only when there is a real choice). Start on the category of a pre-selected pack, else the first.
   const categories = data?.categories ?? [];
-  const preselected = allPackages.find((p) => p.id === selectedId);
+  const preselected = allPackages.find((p) => p.id === selectedId) ?? allPackages.find((p) => p.id === focusPackId);
   const startCategory = categoryChoice ?? (preselected ? effectiveCategoryId(preselected, categories) : null);
   const filtered = categoryFilter(packages, categories, startCategory);
 
-  const buyerFields: BuyerField[] = region
+  // Only a pack that is still on sale, and on screen, is scrolled to and glowed; otherwise the page just opens.
+  const highlightPack = highlight ? filtered.visible.find((p) => p.id === highlight) : undefined;
+  const highlighter = useScrollToHighlight({
+    targetId: highlight ?? null,
+    token: hl ?? null,
+    ready: page.status !== 'loading',
+    present: !!highlightPack && priceDisplay(highlightPack.price, highlightPack.oldPrice).discountPct !== null,
+    containers: [scroll],
+    onConsumed: () => router.setParams({ highlight: undefined, hl: undefined }),
+  });
+
+  const buyerFields: BuyerField[] = gift
+    ? []
+    : region
     ? region.buyerFields
     : product && needsAccountId(product.category)
       ? [{ key: 'account_id', label: t('product.gameId'), type: 'text' }]
       : [];
-  const idMode: 'supplier' | 'tick' | 'none' = region
+  const idMode: 'supplier' | 'tick' | 'none' = gift
+    ? 'none'
+    : region
     ? region.idValidation === 'supplier'
       ? 'supplier'
       : buyerFields.length > 0
@@ -177,8 +207,14 @@ export default function ProductScreen() {
   const suggestion = check.kind === 'valid' && region ? suggestRegion(groups, region.id, accountRegion) : null;
   const anyLockedHere = packages.some((p) => p.regionLocked);
 
+  // Gifting: the recipient's account (and its region) is only known at claim time, so every pack that can be sold to
+  // SOME account is offered; a locked pack with no region codes can't be sold to anyone.
   const stateOf = (pkg: (typeof packages)[number]) =>
-    packageState(pkg, { idMode, validated: check.kind === 'valid', accountRegion });
+    gift
+      ? pkg.regionLocked && pkg.accountRegionCodes.length === 0
+        ? 'unavailable'
+        : 'ok'
+      : packageState(pkg, { idMode, validated: check.kind === 'valid', accountRegion });
 
   // Where the supplier can check IDs, the pack list stays locked until the ID is confirmed. Other games have nothing to check,
   // so their packs are open (the ID field is still above them).
@@ -255,6 +291,40 @@ export default function ProductScreen() {
     }
   }
 
+  /** Gift mode's one button: buy this pack as the gift / redeem code, then the done screen (or the bank screen). */
+  async function onGift() {
+    if (!gift || !selected || blocker !== null || buying) return;
+    setNotice(null);
+    setBuying(true);
+    try {
+      const result = await checkoutGift(selected.id, gift.kind, gift.kind === 'gift' ? gift.to : null);
+      if (result.paid) router.replace({ pathname: '/gift/done/[id]', params: { id: result.orderId } });
+      else router.replace({ pathname: '/pay/[id]', params: { id: result.orderId } });
+    } catch (err) {
+      const e = giftCheckoutError(err);
+      if (e.kind === 'pending_order' && e.orderId) {
+        toast(t('gift.error.pending'));
+        router.push({ pathname: '/pay/[id]', params: { id: e.orderId } });
+      } else {
+        setNotice(
+          t(
+            e.kind === 'self'
+              ? 'gift.email.self'
+              : e.kind === 'recipient_not_found'
+                ? 'gift.email.notFound'
+                : e.kind === 'pack_unavailable'
+                  ? 'gift.error.pack'
+                  : e.kind === 'pending_order'
+                    ? 'gift.error.pending'
+                    : 'gift.error.other'
+          )
+        );
+      }
+    } finally {
+      setBuying(false);
+    }
+  }
+
   // ---------------------------------------------------------------- guards
   if (!initializing && !session) return <Redirect href="/sign-in" />;
   if (!id) return <Redirect href="/shop" />;
@@ -266,6 +336,7 @@ export default function ProductScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
+          {...scroll.props}
           style={styles.flex}
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
@@ -284,6 +355,11 @@ export default function ProductScreen() {
 
             {product && (
               <>
+                {gift && (
+                  <View style={styles.section}>
+                    <GiftBanner target={gift} />
+                  </View>
+                )}
                 <Hero product={product} />
 
                 {needsRegionChips(regions) && (
@@ -302,7 +378,7 @@ export default function ProductScreen() {
 
                 {buyerFields.length > 0 && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>{t('product.idTitle')}</Text>
+                    <Text style={styles.sectionTitle}>{region?.idSectionTitle ?? t('product.idTitle')}</Text>
                     <IdForm
                       fields={buyerFields}
                       values={values}
@@ -312,7 +388,7 @@ export default function ProductScreen() {
                       onRetry={retry}
                       ticked={ticked}
                       onTick={setTicked}
-                      hint={t('product.gameIdHint')}
+                      hint={region?.idSectionHint ?? t('product.gameIdHint')}
                     />
                   </View>
                 )}
@@ -362,6 +438,7 @@ export default function ProductScreen() {
                         setNotice(null);
                       }}
                       stateOf={stateOf}
+                      highlight={highlighter}
                     />
                   </View>
                 </View>
@@ -380,7 +457,8 @@ export default function ProductScreen() {
                 adding={adding}
                 buying={buying}
                 onAdd={onAddToCart}
-                onBuy={onBuyNow}
+                onBuy={gift ? onGift : onBuyNow}
+                giftLabel={gift ? t(gift.kind === 'gift' ? 'gift.buy.gift' : 'gift.buy.code') : undefined}
               />
             </Column>
           </View>

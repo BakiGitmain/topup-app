@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import { colors, fonts, radius } from '../../lib/theme';
+import { FeatherIcon, type FeatherName } from '../art/FeatherIcon';
 
 type Props = {
   label: string;
@@ -20,6 +21,9 @@ type Props = {
   loading?: boolean;
   disabled?: boolean;
   variant?: 'solid' | 'dark' | 'outline';
+  /** Shown to the left of the label -- for a menu-style action (Payment settings, Discount codes...), never
+   * decorative on its own. Hidden while loading (the spinner replaces the whole row, same as before). */
+  icon?: FeatherName;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -29,6 +33,7 @@ export function Button({
   loading = false,
   disabled = false,
   variant = 'solid',
+  icon,
   style,
 }: Props) {
   const [scale] = useState(() => new Animated.Value(1));
@@ -78,9 +83,12 @@ export function Button({
               color={variant === 'dark' ? colors.primaryText : colors.text}
             />
           ) : (
-            <Text style={[styles.label, variant === 'dark' && styles.labelDark]}>
-              {label}
-            </Text>
+            <View style={styles.row}>
+              {icon && <FeatherIcon name={icon} size={17} color={variant === 'dark' ? colors.primaryText : colors.text} strokeWidth={2.2} />}
+              <Text style={[styles.label, variant === 'dark' && styles.labelDark]}>
+                {label}
+              </Text>
+            </View>
           )}
         </View>
       </Pressable>
@@ -106,6 +114,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     borderWidth: 1.5,
     borderColor: colors.borderStrong,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   label: {
     fontFamily: fonts.bold,

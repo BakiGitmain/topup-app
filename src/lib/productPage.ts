@@ -48,6 +48,8 @@ type RegionRow = {
   id_validation: string;
   sort_order: number;
   is_active: boolean;
+  id_section_title: string | null;
+  id_section_hint: string | null;
 };
 
 type Row = {
@@ -67,7 +69,7 @@ type Row = {
 
 // One literal (not concatenated) so the Supabase client can read it as a select string.
 const COLUMNS =
-  'id, name, category, tagline, image_url, description, currency_label, glyph, tint, product_options ( id, label, price, old_price, group_label, region_id, region_locked, account_region_codes, sort_order, is_active, image_url, category_id ), product_regions ( id, code, label, buyer_fields, id_validation, sort_order, is_active ), product_categories ( id, label, sort_order )';
+  'id, name, category, tagline, image_url, description, currency_label, glyph, tint, product_options ( id, label, price, old_price, group_label, region_id, region_locked, account_region_codes, sort_order, is_active, image_url, category_id ), product_regions ( id, code, label, buyer_fields, id_validation, sort_order, is_active, id_section_title, id_section_hint ), product_categories ( id, label, sort_order )';
 
 /** The form a region declares. Anything malformed is dropped rather than rendered. */
 export function parseBuyerFields(raw: unknown): BuyerField[] {
@@ -114,6 +116,8 @@ function toPage(row: Row): ProductPage | null {
       buyerFields: parseBuyerFields(r.buyer_fields),
       idValidation: r.id_validation === 'supplier' ? 'supplier' : 'none',
       sortOrder: r.sort_order,
+      idSectionTitle: r.id_section_title?.trim() ? r.id_section_title : null,
+      idSectionHint: r.id_section_hint?.trim() ? r.id_section_hint : null,
     })),
     packages: live.map((o) => ({
       id: o.id,

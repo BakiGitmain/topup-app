@@ -72,6 +72,22 @@ describe('the check goes to the supplier the region is tagged with', () => {
       assert.equal(seen.fazer.length + seen.s2.length, 0, supplier);
     }
   });
+  it('with the REAL production wiring (FazerCards not registered), a fazercards-tagged region is "could not check", not a crash and never a wrong-supplier guess', async () => {
+    const seen = { s2: [], recorded: [] };
+    const client = createShop2TopupClient({ key: 'k', fetchFn: async () => reply(200, { success: true, data: { player_id: '1', player_name: 'x' } }) });
+    const handle = createHandler({
+      timeoutMs: 500,
+      getUserId: async () => 'user-1',
+      claimSlot: async () => true,
+      getTarget: async () => ({ ...FF, supplier: 'fazercards' }),
+      supplierValidate: routeValidation({ shop2topup: async (categoryId, fields) => validateWithAnyPack(client, [28], { playerId: fields.player_id }) }),
+      record: async (user, region, fields, acct, name) => { seen.recorded.push({ fields, acct, name }); return { validation_id: 'v1', valid_until: FAR }; },
+      log: () => {},
+    });
+    const res = await handle(new Request('https://x.test', { method: 'POST', headers: { authorization: 'Bearer tok', 'content-type': 'application/json' }, body: JSON.stringify({ region_id: REGION, fields: { player_id: '1' } }) }));
+    assert.deepEqual(await res.json(), { status: 'unavailable' });
+    assert.equal(seen.recorded.length, 0);
+  });
 });
 
 describe('Shop2Topup validation through the handler', () => {
@@ -138,12 +154,20 @@ describe('routeValidation on its own', () => {
 
 describe('the deployed wiring (source checks)', () => {
   const index = fs.readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-  it('every supplier check goes through routeValidation, and each supplier has its own key', () => {
+  it('every supplier check goes through routeValidation, and both live suppliers\' keys are read', () => {
     assert.match(index, /supplierValidate: routeValidation\(\{/);
-    assert.match(index, /FAZER_API_KEY/);
     assert.match(index, /SHOP2TOPUP_API_KEY/);
+    assert.match(index, /GAMESDROP_API_KEY/);
+  });
+  it('FazerCards is no longer called: no client, no key read (mentioning why in a comment is fine)', () => {
+    assert.ok(!/new FazerCardsClient|npm:fazercards|Deno\.env\.get\('FAZER_API_KEY'\)/.test(index));
+    // and it is not a registered validator, so a region tagged fazercards gets "could not check", never a silent guess
+    assert.ok(!/fazercards: async/.test(index));
   });
   it('Shop2Topup packs come from the SHOP2TOPUP rows of the saved catalog only', () => {
     assert.match(index, /\.eq\('supplier', 'shop2topup'\)/);
+  });
+  it('GamesDrop is registered as a validator', () => {
+    assert.match(index, /gamesdrop: validateWithGamesDrop/);
   });
 });

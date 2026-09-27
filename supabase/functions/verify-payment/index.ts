@@ -5,6 +5,8 @@
 // Runs on Deno. The logic is in _shared/verifyHandler.ts and _shared/shegerpay.ts (tested in Node); this file only wires it up.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
+import { adapterFor, attemptFulfillment } from '../_shared/fulfillment.ts';
+import { createOrderLookup, createSuccessRecorder } from '../_shared/fulfillmentDb.ts';
 import { createShegerPayCaller } from '../_shared/shegerpayCall.ts';
 import type { BeginResult, FinishResult } from '../_shared/verifyHandler.ts';
 import { createHandler } from './handler.ts';
@@ -21,6 +23,15 @@ const callShegerPay = createShegerPayCaller({
   baseUrl: Deno.env.get('SHEGER_PAY_BASE_URL') || undefined,
   userAgent: 'topup-verify-payment/1.0',
 });
+
+const SHOP2TOPUP_API_KEY = Deno.env.get('SHOP2TOPUP_API_KEY') ?? '';
+const GAMESDROP_API_KEY = Deno.env.get('GAMESDROP_API_KEY') ?? '';
+const fulfillmentDeps = {
+  getOrder: createOrderLookup(admin),
+  recordSuccess: createSuccessRecorder(admin),
+  adapterFor: (supplier: string) => adapterFor(supplier, { shop2topup: SHOP2TOPUP_API_KEY, gamesdrop: GAMESDROP_API_KEY }),
+  log: (event: Record<string, unknown>) => console.log(JSON.stringify(event)),
+};
 
 Deno.serve(
   createHandler({
@@ -50,7 +61,19 @@ Deno.serve(
         p_response: decision.raw,
       });
       if (error) throw error;
-      return data as FinishResult;
+      const result = data as FinishResult;
+      // In-process, not another HTTP hop to fulfill-order (same reason notifyOutbox.ts is called in-process: a
+      // function-to-function call needs auth this function cannot verify for itself). attemptFulfillment never
+      // throws, but this is still wrapped: a payment that just succeeded must be reported to the customer as paid
+      // no matter what happens next, even if fulfillment's own logging somehow misbehaves.
+      if (result.result === 'paid') {
+        try {
+          await attemptFulfillment(orderId, fulfillmentDeps);
+        } catch (error) {
+          console.log(JSON.stringify({ event: 'fulfillment', order_id: orderId, outcome: 'error', message: String((error as Error)?.message ?? '').slice(0, 200) }));
+        }
+      }
+      return result;
     },
 
     callShegerPay,

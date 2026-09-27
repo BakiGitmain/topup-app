@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { describe, it } from 'node:test';
 
 import {
-  GRID_GAP, HOME_COLUMNS, ROW_TILE_MIN_WIDTH, STACK_NAME_LINES, STACK_NAME_LINE_HEIGHT, TILE_ART, TILE_HEIGHT,
+  GRID_GAP, HOME_COLUMNS, ROW_TILE_MIN_WIDTH, STACK_NAME_LINES, STACK_NAME_LINE_HEIGHT, STACK_PAD, TILE_ART, TILE_HEIGHT,
   gridColumns, sectionLimit, stackArt, tileHeight, tileLayout, tileWidth,
 } from './grid.ts';
 
@@ -65,17 +65,19 @@ describe('tile layout: picture-left / name-right when there is room, picture-ove
 });
 
 describe('stacked tile size', () => {
-  it('the picture is between 40 and 72pt and always fits inside the tile with its padding', () => {
+  it('the picture fills nearly the whole tile (small, fixed padding on each side), between 40 and 120pt', () => {
     for (let w = 60; w < ROW_TILE_MIN_WIDTH; w++) {
       const art = stackArt(w);
-      assert.ok(art >= 40 && art <= 72);
-      if (w >= 56) assert.ok(art <= w - 16 || art === 40, `w=${w} art=${art}`);
+      assert.ok(art >= 40 && art <= 120);
+      if (w - STACK_PAD * 2 >= 40) assert.equal(art, Math.min(120, w - STACK_PAD * 2), `w=${w} art=${art}`);
     }
   });
   it('height is fixed per width: room for a two-line name, so one-line and two-line tiles in a row match', () => {
     const w = tileWidth(360, PAD, 3);
-    assert.equal(tileHeight(w), 16 + stackArt(w) + 6 + STACK_NAME_LINES * STACK_NAME_LINE_HEIGHT);
-    assert.equal(tileHeight(w), 16 + 72 + 6 + 30);
+    assert.equal(tileHeight(w), STACK_PAD * 2 + stackArt(w) + 6 + STACK_NAME_LINES * STACK_NAME_LINE_HEIGHT);
+    // pinned: a 360pt phone's tile is 97pt wide, so its picture is 89pt (up from 72 before this fix) and the tile 133pt tall.
+    assert.equal(stackArt(w), 89);
+    assert.equal(tileHeight(w), 133);
   });
   it('a row tile keeps its own fixed height', () => assert.equal(tileHeight(200), TILE_HEIGHT));
 });

@@ -29,8 +29,8 @@ export const ReceiptCard = forwardRef<View, Props>(function ReceiptCard({ order,
     // collapsable={false}: Android must not optimise this view away, or there is nothing to capture.
     <View ref={ref} collapsable={false} style={styles.card}>
       <View style={styles.top}>
-        <Text style={styles.brand}>
-          topup<Text style={styles.brandDot}>.</Text>
+        <Text style={styles.brand} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+          Portal Topup<Text style={styles.brandDot}>.</Text>
         </Text>
         <Text style={styles.kind}>{t('receipt.title')}</Text>
       </View>
@@ -119,7 +119,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   top: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
-  brand: { fontFamily: fonts.extrabold, fontSize: 22, color: colors.text, letterSpacing: -0.5 },
+  brand: { flexShrink: 1, fontFamily: fonts.extrabold, fontSize: 22, color: colors.text, letterSpacing: -0.5 },
   brandDot: { color: colors.limeDeep },
   kind: { fontFamily: fonts.bold, fontSize: 13, letterSpacing: 1.2, color: colors.textMuted, textTransform: 'uppercase' },
   hero: { alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.lg },

@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { formatBirr } from '../../lib/catalog';
-import type { Order } from '../../lib/orders';
+import type { Order, OrderStatus } from '../../lib/orders';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
 import { FeatherIcon } from '../art/FeatherIcon';
 import { StatusBadge } from '../ui/StatusBadge';
@@ -9,13 +9,15 @@ import { StatusBadge } from '../ui/StatusBadge';
 type Props = {
   order: Order;
   statusLabel: string;
+  /** Colours the badge as another status (a gift order's own state); defaults to the order's status. */
+  badgeStatus?: OrderStatus;
   /** Second line under the item, e.g. a date or how long it has been waiting. */
   meta: string;
   onPress: () => void;
 };
 
 /** One order in a list. Shared by the customer's Orders tab and the admin's customer page. */
-export function OrderRow({ order, statusLabel, meta, onPress }: Props) {
+export function OrderRow({ order, statusLabel, badgeStatus, meta, onPress }: Props) {
   return (
     <Pressable
       onPress={onPress}
@@ -43,7 +45,7 @@ export function OrderRow({ order, statusLabel, meta, onPress }: Props) {
 
       <View style={styles.right}>
         <Text style={styles.amount}>{formatBirr(order.amount)}</Text>
-        <StatusBadge status={order.status} label={statusLabel} />
+        <StatusBadge status={badgeStatus ?? order.status} label={statusLabel} />
       </View>
     </Pressable>
   );

@@ -1,14 +1,13 @@
-import * as Clipboard from 'expo-clipboard';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { fetchPaymentAttempts, type QueueOrder } from '../../lib/admin';
 import { formatBirr } from '../../lib/catalog';
 import { formatDateTime } from '../../lib/format';
 import { attemptText, fulfilmentOf, paymentMethodOf, shortOrderId } from '../../lib/orderView';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
-import { useToast } from '../../lib/toast';
 import { useAsync } from '../../lib/useAsync';
 import { FeatherIcon } from '../art/FeatherIcon';
+import { CopyButton } from '../ui/CopyButton';
 
 const METHOD: Record<string, string> = { telebirr: 'Telebirr', cbe: 'CBE', wallet: 'Wallet' };
 
@@ -20,22 +19,16 @@ const METHOD: Record<string, string> = { telebirr: 'Telebirr', cbe: 'CBE', walle
  *      to show and it says so; once fulfilment exists, fulfilmentOf() returns real steps and nothing here has to be redesigned.
  */
 export function OrderTrail({ order }: { order: QueueOrder }) {
-  const toast = useToast();
   const attempts = useAsync(() => fetchPaymentAttempts(order.id), order.id);
   const method = paymentMethodOf(order);
   const fulfilment = fulfilmentOf(order.status);
   const isBank = method === 'telebirr' || method === 'cbe';
 
-  async function copy(text: string, what: string) {
-    await Clipboard.setStringAsync(text);
-    toast(`${what} copied`);
-  }
-
   return (
     <View style={styles.wrap}>
       <View style={styles.card}>
         <Text style={styles.title}>Order</Text>
-        <Line label="Order ID" value={order.id} selectable onCopy={() => copy(order.id, 'Order ID')} />
+        <Line label="Order ID" value={order.id} selectable copyValue={order.id} />
         <Line label="Short ID" value={shortOrderId(order.id)} />
       </View>
 
@@ -46,7 +39,7 @@ export function OrderTrail({ order }: { order: QueueOrder }) {
         {order.payment_verified_amount !== null && order.payment_verified_amount !== undefined ? (
           <Line label="Verified amount" value={formatBirr(Number(order.payment_verified_amount))} />
         ) : null}
-        {order.payment_reference ? <Line label="Reference" value={order.payment_reference} selectable onCopy={() => copy(order.payment_reference as string, 'Reference')} /> : null}
+        {order.payment_reference ? <Line label="Reference" value={order.payment_reference} selectable copyValue={order.payment_reference} /> : null}
         {order.paid_at ? <Line label="Paid at" value={formatDateTime(order.paid_at)} /> : null}
         {order.payment_mode ? <Line label="Mode" value={order.payment_mode === 'test' ? 'TEST key (no real money)' : order.payment_mode === 'wallet' ? 'Wallet (no bank)' : 'Live'} warn={order.payment_mode === 'test'} /> : null}
 
@@ -92,7 +85,7 @@ export function OrderTrail({ order }: { order: QueueOrder }) {
   );
 }
 
-function Line({ label, value, selectable, onCopy, warn }: { label: string; value: string; selectable?: boolean; onCopy?: () => void; warn?: boolean }) {
+function Line({ label, value, selectable, copyValue, warn }: { label: string; value: string; selectable?: boolean; copyValue?: string; warn?: boolean }) {
   return (
     <View style={styles.line}>
       <Text style={styles.label}>{label}</Text>
@@ -100,11 +93,7 @@ function Line({ label, value, selectable, onCopy, warn }: { label: string; value
         <Text style={[styles.value, warn && styles.warn]} selectable={selectable}>
           {value}
         </Text>
-        {onCopy ? (
-          <Pressable onPress={onCopy} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Copy ${label}`} style={styles.copy}>
-            <FeatherIcon name="copy" size={15} color={colors.limeDark} />
-          </Pressable>
-        ) : null}
+        {copyValue ? <CopyButton value={copyValue} size={28} accessibilityLabel={`Copy ${label}`} /> : null}
       </View>
     </View>
   );
@@ -120,7 +109,6 @@ const styles = StyleSheet.create({
   valueBox: { flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
   value: { flexShrink: 1, fontFamily: fonts.semibold, fontSize: 13.5, color: colors.text, textAlign: 'right' },
   warn: { color: '#8A5A00' },
-  copy: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.limeSoft },
   attempts: { marginTop: spacing.xs, gap: spacing.sm },
   attempt: { paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, gap: 2 },
   attemptWhen: { fontFamily: fonts.regular, fontSize: 12, color: colors.textMuted },

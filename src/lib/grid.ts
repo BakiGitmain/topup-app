@@ -15,12 +15,14 @@ export const HOME_COLUMNS = 3;
  */
 export const ROW_TILE_MIN_WIDTH = 150;
 
-/** Row layout: the picture and its padding. */
-export const TILE_ART = 56;
+/** Row layout: the picture and its padding. The picture is not boxed (no border, no background of its own): it fills as
+ * much of the fixed-height row as it can, with only a little breathing room on each side. */
+export const TILE_ART = 64;
 export const TILE_HEIGHT = 72;
 
-/** Stacked layout: padding around the tile, gap between picture and name, and how many name lines are kept. */
-export const STACK_PAD = 8;
+/** Stacked layout: padding around the tile, gap between picture and name, and how many name lines are kept. Small, so the
+ * picture (see stackArt) fills nearly the whole tile width instead of sitting in a visibly framed box. */
+export const STACK_PAD = 4;
 export const STACK_GAP = 6;
 export const STACK_NAME_LINES = 2;
 export const STACK_NAME_LINE_HEIGHT = 15;
@@ -47,9 +49,10 @@ export function tileWidth(contentWidth: number, sidePadding: number, columns: nu
   return Number.isFinite(room) ? Math.max(0, Math.floor(room / columns)) : 0;
 }
 
-/** The picture in a stacked tile: as wide as the tile allows (minus padding), between 40 and 72pt. */
+/** The picture in a stacked tile: as wide as the tile allows (minus the small padding), between 40 and 120pt. The row
+ * layout takes over at ROW_TILE_MIN_WIDTH (150) anyway, so 120 is already close to the widest a stacked tile ever gets. */
 export function stackArt(width: number): number {
-  return Math.max(40, Math.min(72, Math.floor(width - STACK_PAD * 2)));
+  return Math.max(40, Math.min(120, Math.floor(width - STACK_PAD * 2)));
 }
 
 /** Height of a tile. Fixed per width, so every tile in a row is the same height whether its name is one line or two. */

@@ -75,6 +75,7 @@ export default function QueueScreen() {
             accessibilityLabel={`Withdrawals, ${withdrawals.data ?? 0} waiting`}
             style={({ pressed }) => [styles.wdLink, (withdrawals.data ?? 0) > 0 && styles.wdLinkOn, pressed && styles.pressed]}
           >
+            <FeatherIcon name="credit-card" size={13} color={(withdrawals.data ?? 0) > 0 ? colors.text : colors.textMuted} strokeWidth={2.4} />
             <Text style={[styles.wdText, (withdrawals.data ?? 0) > 0 && styles.wdTextOn]}>
               {(withdrawals.data ?? 0) > 0 ? `Withdrawals · ${withdrawals.data}` : 'Withdrawals'}
             </Text>
@@ -181,7 +182,7 @@ const styles = StyleSheet.create({
   searchHint: { fontFamily: fonts.medium, fontSize: 13.5, lineHeight: 20, color: colors.textMuted, marginBottom: spacing.sm },
   hidden: { display: 'none' },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
-  wdLink: { minHeight: 36, paddingHorizontal: 14, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  wdLink: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 14, borderRadius: 18, justifyContent: 'center', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   wdLinkOn: { backgroundColor: '#FFF1CC', borderColor: '#F2DFA6' },
   wdText: { fontFamily: fonts.bold, fontSize: 13, color: colors.textMuted },
   wdTextOn: { color: '#8A5A00' },

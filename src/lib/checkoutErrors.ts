@@ -22,6 +22,17 @@ export type CheckoutError =
   /** Some lines can't be bought (or their player ID isn't checked). NOTHING was created. */
   | { kind: 'cart_unavailable'; failures: CartFailure[] }
   | { kind: 'not_signed_in' }
+  /** The discount code typed at checkout. NOTHING was created in any of these five cases. */
+  | { kind: 'code_not_found' }
+  | { kind: 'code_inactive' }
+  | { kind: 'code_expired' }
+  | { kind: 'code_not_applicable' }
+  | { kind: 'code_already_used' }
+  /** A wheel prize passed at checkout. NOTHING was created in either case. */
+  | { kind: 'wheel_prize_not_found' }
+  | { kind: 'wheel_prize_unavailable' }
+  /** The client sent both a code and a wheel prize -- a client bug, never a real user action. */
+  | { kind: 'multiple_discounts_not_allowed' }
   | { kind: 'other' };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -41,6 +52,15 @@ export function parseCheckoutError(error: unknown): CheckoutError {
   }
   if (message.includes('cart_empty')) return { kind: 'cart_empty' };
   if (message.includes('not_authenticated')) return { kind: 'not_signed_in' };
+  // Checked before 'cart_unavailable' below: these are about the CODE, not any one cart line.
+  if (message.includes('code_not_found')) return { kind: 'code_not_found' };
+  if (message.includes('code_inactive')) return { kind: 'code_inactive' };
+  if (message.includes('code_expired')) return { kind: 'code_expired' };
+  if (message.includes('code_not_applicable')) return { kind: 'code_not_applicable' };
+  if (message.includes('code_already_used')) return { kind: 'code_already_used' };
+  if (message.includes('multiple_discounts_not_allowed')) return { kind: 'multiple_discounts_not_allowed' };
+  if (message.includes('wheel_prize_not_found')) return { kind: 'wheel_prize_not_found' };
+  if (message.includes('wheel_prize_unavailable')) return { kind: 'wheel_prize_unavailable' };
   if (message.includes('cart_unavailable')) {
     try {
       const list: unknown = JSON.parse(details);

@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import {
   KNOWN_ACCOUNT_REGION_CODES, buildImportPayload, commonUnit, costRange, formatUsd, formatUsdRange, groupByGame, mapValidationFields,
   SUPPLIERS, SUPPLIER_LABEL, ageText, oldestDate, stalePriceWarnings, categoryKeyFor, applyOutcome, effectiveRow, initialRegionState, parseLoadOffers, parseRefresh, regionCodeFor, regionDefaults, staleLevel, unitOf, unreachableText,
+  crossSupplierValidation, ownValidation, resolvedValidation,
 } from './importPlan.ts';
 
 const PLAYER = [{ key: 'player_id', label: 'Player ID', type: 'text' }];
@@ -462,9 +463,11 @@ describe('importing from a named supplier', () => {
     const r = buildImportPayload({ name: 'X', imageUrl: null, regions: [choice(s2(), priced(OFFERS)), choice(s2({ category_id: '9', region_label: 'Brazil', note_region: 'Brazil' }), priced(OFFERS))] });
     assert.equal(r.ok, true);
   });
-  it('the supplier names and their labels', () => {
-    assert.deepEqual([...SUPPLIERS], ['fazercards', 'shop2topup']);
-    assert.deepEqual(SUPPLIER_LABEL, { fazercards: 'FazerCards', shop2topup: 'Shop2Topup' });
+  it('the admin can pick exactly Shop2Topup and GamesDrop; FazerCards is not offered (its trial has ended)', () => {
+    assert.deepEqual([...SUPPLIERS], ['shop2topup', 'gamesdrop']);
+  });
+  it('every label, including FazerCards\' (kept only for its historical data, not for picking)', () => {
+    assert.deepEqual(SUPPLIER_LABEL, { fazercards: 'FazerCards', shop2topup: 'Shop2Topup', gamesdrop: 'GamesDrop' });
   });
 });
 
@@ -493,5 +496,91 @@ describe('Shop2Topup regions (what the real catalog looks like)', () => {
   });
   it('a Shop2Topup Mobile Legends form maps onto its check (both use zone_id, so no rename is needed)', () => {
     assert.deepEqual(mapValidationFields(ML_CHECK, ML_CHECK), {});
+  });
+});
+
+describe('cross-supplier ID checks (validation is independent of the fulfilment supplier)', () => {
+  const bloodRow = () => row({
+    supplier: 'fazercards', category_id: 'blood_strike_mena', name: 'Blood Strike (Mena)', game_name: 'Blood Strike',
+    region_label: 'MENA', note_region: 'MENA', validation_category_id: null, validation_fields: null,
+  });
+  const s2Candidate = { supplier: 'shop2topup', validation_category_id: '445', validation_fields: PLAYER, note_region: null };
+  const fzCandidate = { supplier: 'fazercards', validation_category_id: 'free_fire', validation_fields: PLAYER, note_region: 'MENA' };
+
+  it("ownValidation is null when this row's own supplier has no check (Blood Strike on FazerCards)", () => {
+    assert.equal(ownValidation(bloodRow()), null);
+  });
+  it("ownValidation mirrors the row's own fields when it does check (Free Fire on FazerCards)", () => {
+    assert.deepEqual(ownValidation(row()), fzCandidate);
+  });
+
+  it('crossSupplierValidation finds another supplier\'s candidate for the same game', () => {
+    assert.deepEqual(crossSupplierValidation(bloodRow(), [s2Candidate]), s2Candidate);
+  });
+  it('...never offers the row\'s own supplier as a "cross" option', () => {
+    assert.equal(crossSupplierValidation(row(), [fzCandidate]), null);
+  });
+  it('...with several candidates, prefers one whose region matches, else the global one, else the first', () => {
+    const mena = { supplier: 'shop2topup', validation_category_id: '445', validation_fields: PLAYER, note_region: 'MENA' };
+    const global = { supplier: 'shop2topup', validation_category_id: '491', validation_fields: PLAYER, note_region: null };
+    const other = { supplier: 'shop2topup', validation_category_id: '999', validation_fields: PLAYER, note_region: 'Brazil' };
+    assert.equal(crossSupplierValidation(bloodRow(), [other, global, mena]), mena);
+    assert.equal(crossSupplierValidation(bloodRow(), [other, global]), global);
+    assert.equal(crossSupplierValidation(bloodRow(), [other]), other);
+  });
+  it('no candidates at all: null', () => assert.equal(crossSupplierValidation(bloodRow(), []), null));
+
+  it("resolvedValidation: no choice made falls back to the row's own (possibly null)", () => {
+    assert.equal(resolvedValidation(null, s2Candidate, undefined), null);
+    assert.deepEqual(resolvedValidation(fzCandidate, s2Candidate, undefined), fzCandidate);
+  });
+  it('...an explicit null forces "don\'t check", even with a candidate on offer', () => {
+    assert.equal(resolvedValidation(fzCandidate, s2Candidate, null), null);
+  });
+  it('...picking a supplier by name uses that candidate', () => {
+    assert.deepEqual(resolvedValidation(null, s2Candidate, 'shop2topup'), s2Candidate);
+    assert.deepEqual(resolvedValidation(fzCandidate, s2Candidate, 'fazercards'), fzCandidate);
+  });
+  it('...a choice matching neither candidate (stale data) falls back to the row\'s own rather than guessing', () => {
+    assert.deepEqual(resolvedValidation(fzCandidate, null, 'shop2topup'), fzCandidate);
+  });
+
+  it("regionDefaults, given an explicit validation source, checks with THAT supplier's category and form and locks by ITS region", () => {
+    const d = regionDefaults(bloodRow(), s2Candidate);
+    assert.deepEqual([d.idMode, d.validationCategoryId, d.locked, d.codes], ['supplier', '445', false, []]);
+  });
+  it('regionDefaults with validation explicitly null never checks IDs, whatever the row itself would have done on its own', () => {
+    const d = regionDefaults(row(), null); // Free Fire MENA, which DOES validate on its own
+    assert.deepEqual([d.idMode, d.locked], ['none', false]);
+  });
+  it("regionDefaults with no second argument behaves exactly as before: the row's own data", () => {
+    assert.deepEqual(regionDefaults(row()), regionDefaults(row(), row()));
+    assert.deepEqual(regionDefaults(bloodRow()), regionDefaults(bloodRow(), bloodRow()));
+  });
+
+  describe("buildImportPayload: validation_supplier is sent only when it differs from the packs' own supplier", () => {
+    it('Blood Strike: FazerCards packs, Shop2Topup validation, its own category and lock state', () => {
+      const r = buildImportPayload({ name: 'Blood Strike', imageUrl: null, regions: [choice(bloodRow(), priced(OFFERS), { validation: s2Candidate })] });
+      assert.equal(r.ok, true);
+      const region = r.payload.regions[0];
+      assert.deepEqual(
+        [region.supplier, region.validation_supplier, region.id_validation, region.validation_category_id, region.packs[0].region_locked],
+        ['fazercards', 'shop2topup', 'supplier', '445', false]
+      );
+    });
+    it('the default (no validation override) omits validation_supplier entirely: nothing changes for Free Fire, PUBG...', () => {
+      const r = buildImportPayload({ name: 'X', imageUrl: null, regions: [choice(row(), priced(OFFERS))] });
+      assert.equal(r.ok, true);
+      assert.equal('validation_supplier' in r.payload.regions[0], false);
+    });
+    it('...and so does explicitly picking the SAME supplier back (own === chosen)', () => {
+      const r = buildImportPayload({ name: 'X', imageUrl: null, regions: [choice(row(), priced(OFFERS), { validation: ownValidation(row()) })] });
+      assert.equal('validation_supplier' in r.payload.regions[0], false);
+    });
+    it('explicitly choosing "don\'t check" omits validation_supplier too (mode is none, nothing to route)', () => {
+      const r = buildImportPayload({ name: 'X', imageUrl: null, regions: [choice(row(), priced(OFFERS), { validation: null })] });
+      assert.equal(r.payload.regions[0].id_validation, 'none');
+      assert.equal('validation_supplier' in r.payload.regions[0], false);
+    });
   });
 });

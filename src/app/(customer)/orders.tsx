@@ -11,7 +11,9 @@ import { Column, TabScroll } from '../../components/ui/TabScroll';
 import { useAuth } from '../../lib/auth';
 import { formatDateTime } from '../../lib/format';
 import { useT } from '../../lib/i18n';
-import { fetchMyOrders } from '../../lib/orders';
+import { fetchMyOrders, type Order } from '../../lib/orders';
+import { giftOrderView } from '../../lib/orderView';
+import type { StringKey } from '../../lib/strings';
 import { colors, fonts, spacing } from '../../lib/theme';
 import { useAsync, useRefreshOnFocus } from '../../lib/useAsync';
 
@@ -21,8 +23,19 @@ export default function OrdersScreen() {
   const userId = user?.id;
   const [refreshing, setRefreshing] = useState(false);
 
-  const orders = useAsync(() => (userId ? fetchMyOrders(userId) : Promise.resolve([])));
+  const orders = useAsync(() => (userId ? fetchMyOrders(userId) : Promise.resolve([])), userId ?? '');
   useRefreshOnFocus(orders.reload);
+
+  /** A gift order shows the gift's own state ("claimed", "not redeemed yet"...), every other order its status. */
+  const statusText = (order: Order) => {
+    const gift = giftOrderView(order);
+    return gift?.state ? t(`orders.gift.state.${gift.state}` as StringKey) : t(`status.${order.status}`);
+  };
+  /** ...and says what it is: "Gift sent", "Redeem code" or "Gift received", before the date. */
+  const metaText = (order: Order) => {
+    const gift = giftOrderView(order);
+    return gift ? `${t(gift.label)} · ${formatDateTime(order.created_at)}` : formatDateTime(order.created_at);
+  };
 
   async function onRefresh() {
     setRefreshing(true);
@@ -66,8 +79,9 @@ export default function OrdersScreen() {
             <OrderRow
               key={order.id}
               order={order}
-              statusLabel={t(`status.${order.status}`)}
-              meta={formatDateTime(order.created_at)}
+              statusLabel={statusText(order)}
+              badgeStatus={giftOrderView(order)?.tone ?? undefined}
+              meta={metaText(order)}
               onPress={() =>
                 order.status === 'pending_payment'
                   ? router.push({ pathname: '/pay/[id]', params: { id: order.id } })

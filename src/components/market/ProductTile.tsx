@@ -1,12 +1,10 @@
-import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
-import { useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text } from 'react-native';
 
 import type { Product } from '../../lib/catalog';
-import { tileLetter } from '../../lib/catalogRules';
 import { STACK_GAP, STACK_NAME_LINES, STACK_NAME_LINE_HEIGHT, STACK_PAD, TILE_ART, TILE_HEIGHT, stackArt, tileHeight, tileLayout } from '../../lib/grid';
-import { colors, fonts, radius } from '../../lib/theme';
+import { colors, fonts } from '../../lib/theme';
+import { ProductArt } from './ProductArt';
 
 type Props = {
   product: Product;
@@ -24,9 +22,6 @@ type Props = {
  *  - STACK (narrower, which is every 3-column phone tile): picture on top, name centred below it, up to two lines.
  */
 export function ProductTile({ product, width, onPress }: Props) {
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  const url = product.imageUrl;
-  const showImage = url !== null && failedUrl !== url;
   const layout = tileLayout(width);
   const art = layout === 'row' ? TILE_ART : stackArt(width);
 
@@ -42,25 +37,8 @@ export function ProductTile({ product, width, onPress }: Props) {
       accessibilityLabel={product.name}
       style={({ pressed }) => [layout === 'row' ? styles.row : styles.stack, { width, height: tileHeight(width) }, pressed && styles.pressed]}
     >
-      <View style={[styles.art, { width: art, height: art, backgroundColor: showImage ? colors.bg : product.tint }]}>
-        {showImage ? (
-          <Image
-            source={{ uri: url }}
-            style={StyleSheet.absoluteFill}
-            contentFit="contain"
-            transition={150}
-            accessibilityIgnoresInvertColors
-            onError={(event) => {
-              if (__DEV__) console.warn(`[artwork] failed to load for "${product.name}": ${url} (${event.error})`);
-              setFailedUrl(url);
-            }}
-          />
-        ) : (
-          <Text style={[styles.letter, layout === 'stack' && { fontSize: Math.round(art * 0.42) }]} numberOfLines={1} allowFontScaling={false} importantForAccessibility="no">
-            {tileLetter(product.name)}
-          </Text>
-        )}
-      </View>
+      {/* The one shared art rule (contained picture in a rounded square, or the letter on the product's tint). */}
+      <ProductArt name={product.name} imageUrl={product.imageUrl} tint={product.tint} size={art} letterSize={layout === 'stack' ? Math.round(art * 0.42) : undefined} />
       <Text
         style={layout === 'row' ? styles.nameRow : styles.nameStack}
         numberOfLines={layout === 'stack' ? STACK_NAME_LINES : 2}
@@ -73,27 +51,12 @@ export function ProductTile({ product, width, onPress }: Props) {
   );
 }
 
-const box = {
-  borderRadius: radius.md,
-  backgroundColor: colors.surface,
-  borderWidth: StyleSheet.hairlineWidth,
-  borderColor: colors.border,
-} as const;
-
+// No card behind the tile any more (no background, no border): the picture is the tile. Only its own rounded corners
+// (on `art`, below) give the grid its shape now.
 const styles = StyleSheet.create({
-  row: { ...box, flexDirection: 'row', alignItems: 'center', gap: 12, padding: (TILE_HEIGHT - TILE_ART) / 2 },
-  stack: { ...box, alignItems: 'center', padding: STACK_PAD, gap: STACK_GAP },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: (TILE_HEIGHT - TILE_ART) / 2 },
+  stack: { alignItems: 'center', padding: STACK_PAD, gap: STACK_GAP },
   pressed: { opacity: 0.85, transform: [{ scale: 0.98 }] },
-  // A fixed square per tile, so every picture is the same size whatever shape the artwork is.
-  art: {
-    borderRadius: 14,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
-  letter: { fontFamily: fonts.extrabold, fontSize: 26, color: colors.text, opacity: 0.5, includeFontPadding: false },
   nameRow: { flex: 1, fontFamily: fonts.bold, fontSize: 14, lineHeight: 18, color: colors.text, letterSpacing: -0.1 },
   nameStack: { alignSelf: 'stretch', textAlign: 'center', fontFamily: fonts.bold, fontSize: 12, lineHeight: STACK_NAME_LINE_HEIGHT, color: colors.text },
 });

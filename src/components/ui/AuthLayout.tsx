@@ -26,7 +26,7 @@ type Props = {
 
 function goBack() {
   if (router.canGoBack()) router.back();
-  else router.replace('/welcome');
+  else router.replace('/splash');
 }
 
 /**

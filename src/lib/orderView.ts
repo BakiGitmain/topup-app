@@ -1,5 +1,26 @@
 /** How an order's ID check reads on screen. Pure functions with no imports. */
 
+/**
+ * How a gift-related order reads in the customer's Orders list, or null for an ordinary order. The buyer's order
+ * behind a gift or redeem code never completes (it only backs the gift), so its label is the gift's own state; the
+ * recipient's delivery order is a normal order, marked as a gift received. `tone` picks the status-badge colour.
+ */
+export function giftOrderView(order: {
+  status: string;
+  gift_kind?: 'gift' | 'redeem_code' | null;
+  gift_state?: string | null;
+  gift_id?: string | null;
+}): { label: 'orders.gift.sent' | 'orders.gift.code' | 'orders.gift.received'; state: string | null; tone: 'processing' | 'completed' | 'cancelled' | null } | null {
+  if (order.gift_id) return { label: 'orders.gift.received', state: null, tone: null };
+  if (!order.gift_kind) return null;
+  const label = order.gift_kind === 'gift' ? 'orders.gift.sent' : 'orders.gift.code';
+  // Not paid yet (or cancelled): the order's own status says it best.
+  if (order.status !== 'paid' || !order.gift_state) return { label, state: null, tone: null };
+  const state = order.gift_state;
+  const tone = state === 'claimed' || state === 'redeemed' ? 'completed' : state === 'expired' ? 'cancelled' : 'processing';
+  return { label, state, tone };
+}
+
 export type OrderCheckFields = {
   validation_id?: string | null;
   validated_account_region?: string | null;
@@ -65,10 +86,10 @@ export function attemptText(a: { outcome: string; verified_amount: number | stri
 export type FulfilmentStep = { key: 'paid' | 'in_progress' | 'delivered'; label: string; state: 'done' | 'current' | 'todo' };
 
 /**
- * The delivery half of an order's trail. THE SLOT for fulfilment: today only orders that went through the older direct-purchase
- * path (pending / processing / completed) carry a delivery status; an order that is merely "paid" has none yet because
- * fulfilment for paid orders is not built. `tracked: false` tells the screen to say so instead of inventing a status. When
- * fulfilment exists, return real steps here and neither the receipt nor the admin view needs redesigning.
+ * The delivery half of an order's trail. 'paid' (bank transfer or instant wallet payment) and 'pending' (the older
+ * direct-purchase path's default status) are the same starting point now that admin_deliver_order/
+ * admin_set_order_status accept either (2026-09-23: closed the gap where a merely-"paid" order had no fulfilment
+ * step at all). `tracked: false` tells the screen to say so instead of inventing a status for anything else.
  */
 export function fulfilmentOf(status: string): { tracked: boolean; steps: FulfilmentStep[] } {
   const steps = (current: 0 | 1 | 2): FulfilmentStep[] => [
@@ -77,6 +98,7 @@ export function fulfilmentOf(status: string): { tracked: boolean; steps: Fulfilm
     { key: 'delivered', label: 'Delivered', state: current === 2 ? 'done' : 'todo' },
   ];
   switch (status) {
+    case 'paid':
     case 'pending':
       return { tracked: true, steps: steps(0) };
     case 'processing':

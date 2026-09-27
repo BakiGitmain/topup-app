@@ -8,11 +8,17 @@ import {
   formatUsdRange,
   regionDefaults,
   effectiveRow,
+  ownValidation,
+  crossSupplierValidation,
+  resolvedValidation,
+  SUPPLIER_LABEL,
   type CatalogOffer,
   type CatalogRow,
   type ImportCategory,
   type PackDraft,
   type RegionState,
+  type SupplierName,
+  type ValidationCandidate,
 } from '../../lib/importPlan';
 import { differsFromCalculated, percentOf, priceText, withPercent, withReset, withStep, withTick, withTypedPrice, type Rate } from '../../lib/priceCalc';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
@@ -20,6 +26,7 @@ import { FeatherIcon } from '../art/FeatherIcon';
 import { CheckRow } from '../ui/CheckRow';
 import { FreshnessPill } from './FreshnessPill';
 import { MarkupStepper } from './MarkupStepper';
+import { PillGroup } from '../ui/PillGroup';
 import { TextField } from '../ui/TextField';
 
 type Props = {
@@ -31,9 +38,12 @@ type Props = {
   categories?: ImportCategory[];
   /** The shared exchange rate that pre-fills prices. Null when there is no usable rate: prices are then typed by hand. */
   rate: Rate;
+  /** Every supplier's own validated category for this GAME (both suppliers, fetched once per game), for offering a
+   * cross-supplier ID check when this row's own supplier can't check it (or a different one is preferred). */
+  validationCandidates?: ValidationCandidate[];
 };
 
-export function ImportRegionPacks({ row, state, onChange, onRefresh, categories = [], rate }: Props) {
+export function ImportRegionPacks({ row, state, onChange, onRefresh, categories = [], rate, validationCandidates = [] }: Props) {
   const offers = state.data?.offers ?? row.offers ?? [];
   const range = formatUsdRange(costRange(offers));
   const title = row.region_label ?? row.name;
@@ -56,13 +66,18 @@ export function ImportRegionPacks({ row, state, onChange, onRefresh, categories 
         </View>
       )}
 
-      {state.ticked && <Body row={row} state={state} onChange={onChange} onRefresh={onRefresh} offers={offers} categories={categories} rate={rate} />}
+      {state.ticked && (
+        <Body row={row} state={state} onChange={onChange} onRefresh={onRefresh} offers={offers} categories={categories} rate={rate} validationCandidates={validationCandidates} />
+      )}
     </View>
   );
 }
 
-function Body({ row, state, onChange, onRefresh, offers, categories = [], rate }: Props & { offers: CatalogOffer[] }) {
-  const defaults = state.data ? regionDefaults(effectiveRow(row, state)) : null;
+function Body({ row, state, onChange, onRefresh, offers, categories = [], rate, validationCandidates = [] }: Props & { offers: CatalogOffer[] }) {
+  const ownCheck = ownValidation(row);
+  const crossCheck = crossSupplierValidation(row, validationCandidates);
+  const resolvedCheck = resolvedValidation(ownCheck, crossCheck, state.validationChoice);
+  const defaults = state.data ? regionDefaults(effectiveRow(row, state), resolvedCheck) : null;
   const parsed = parseRegionCodes(state.codesText);
   const fetchedAt = state.data?.fetchedAt ?? null;
   const tickedCount = offers.filter((o) => state.packs[o.ref]?.ticked).length;
@@ -106,6 +121,37 @@ function Body({ row, state, onChange, onRefresh, offers, categories = [], rate }
           <Text style={styles.refreshText}>{state.busy ? 'Fetching' : 'Refresh prices'}</Text>
         </Pressable>
       </View>
+      {ownCheck === null && crossCheck !== null && (
+        <View style={styles.crossValidation}>
+          <Text style={styles.fact}>
+            {`${SUPPLIER_LABEL[row.supplier ?? 'fazercards']} can't check IDs for this game, but ${SUPPLIER_LABEL[crossCheck.supplier]} can. The packs still come from ${SUPPLIER_LABEL[row.supplier ?? 'fazercards']}.`}
+          </Text>
+          <PillGroup<'none' | SupplierName>
+            label={`ID check for ${row.name}`}
+            value={state.validationChoice === crossCheck.supplier ? crossCheck.supplier : 'none'}
+            options={[
+              { id: 'none', label: "Customers tick instead" },
+              { id: crossCheck.supplier, label: `Validate with ${SUPPLIER_LABEL[crossCheck.supplier]}` },
+            ]}
+            onChange={(id) => onChange({ validationChoice: id === 'none' ? null : crossCheck.supplier })}
+          />
+        </View>
+      )}
+      {ownCheck !== null && crossCheck !== null && ownCheck.supplier !== crossCheck.supplier && (
+        <View style={styles.crossValidation}>
+          <Text style={styles.fact}>Both suppliers can check IDs for this game.</Text>
+          <PillGroup<SupplierName>
+            label={`ID check for ${row.name}`}
+            value={resolvedCheck?.supplier ?? ownCheck.supplier}
+            options={[
+              { id: ownCheck.supplier, label: SUPPLIER_LABEL[ownCheck.supplier] },
+              { id: crossCheck.supplier, label: SUPPLIER_LABEL[crossCheck.supplier] },
+            ]}
+            onChange={(id) => onChange({ validationChoice: id })}
+          />
+        </View>
+      )}
+
       {defaults && (
         <View style={styles.facts}>
           <Text style={styles.fact}>
@@ -285,6 +331,7 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.8 },
   disabled: { opacity: 0.6 },
   notice: { fontFamily: fonts.medium, fontSize: 12.5, lineHeight: 18, color: colors.danger, marginBottom: spacing.sm },
+  crossValidation: { gap: 6, marginBottom: spacing.md },
   facts: { gap: 4, marginBottom: spacing.md },
   fact: { fontFamily: fonts.regular, fontSize: 12.5, lineHeight: 18, color: colors.textMuted },
   packHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.xs, minHeight: 44 },

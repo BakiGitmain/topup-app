@@ -11,6 +11,10 @@ type CartValue = {
   /** Every unit in the cart, for the badge. */
   count: number;
   status: Loaded['status'];
+  /** True while an add/remove/quantity/tick change is still in flight (its network round trip, then its reload).
+   * Checkout must wait for this to clear: create_cart_order() reads cart_items fresh from the server at the moment
+   * it is called, so racing it against a still-in-flight removal can charge for a line the customer just removed. */
+  mutating: boolean;
   reload: () => Promise<void>;
   /** Throw on failure (read the message with cartErrorText). */
   add: (input: { optionId: string; fields: Record<string, string>; idChecked: boolean }) => Promise<void>;
@@ -23,6 +27,7 @@ const CartContext = createContext<CartValue>({
   lines: [],
   count: 0,
   status: 'loading',
+  mutating: false,
   reload: async () => {},
   add: async () => {},
   setQty: async () => {},
@@ -48,6 +53,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const [state, setState] = useState<Loaded>({ userId: null, lines: [], status: 'loading' });
+  // A count, not a flag: two lines removed in quick succession are two overlapping mutations, and checkout must
+  // stay blocked until BOTH have finished, not just the first one to settle.
+  const [pending, setPending] = useState(0);
+  const withPending = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
+    setPending((n) => n + 1);
+    try {
+      return await fn();
+    } finally {
+      setPending((n) => n - 1);
+    }
+  }, []);
 
   const reload = useCallback(async () => {
     if (!userId) return;
@@ -90,39 +106,44 @@ export function CartProvider({ children }: { children: ReactNode }) {
       lines,
       count: cartCount(lines),
       status,
+      mutating: pending > 0,
       reload,
-      add: async (input) => {
-        if (!userId) throw new Error('not_authenticated');
-        await addToCart(userId, input);
-        await reload();
-      },
-      setQty: async (lineId, quantity) => {
-        const q = clampQuantity(quantity);
-        setState((s) => ({ ...s, lines: s.lines.map((l) => (l.id === lineId ? { ...l, quantity: q } : l)) }));
-        try {
-          await setQuantity(lineId, q);
-        } finally {
+      add: (input) =>
+        withPending(async () => {
+          if (!userId) throw new Error('not_authenticated');
+          await addToCart(userId, input);
           await reload();
-        }
-      },
-      setChecked: async (lineId, checked) => {
-        setState((s) => ({ ...s, lines: s.lines.map((l) => (l.id === lineId ? { ...l, idChecked: checked } : l)) }));
-        try {
-          await setIdChecked(lineId, checked);
-        } finally {
-          await reload();
-        }
-      },
-      remove: async (lineIds) => {
-        setState((s) => ({ ...s, lines: s.lines.filter((l) => !lineIds.includes(l.id)) }));
-        try {
-          await removeLines(lineIds);
-        } finally {
-          await reload();
-        }
-      },
+        }),
+      setQty: (lineId, quantity) =>
+        withPending(async () => {
+          const q = clampQuantity(quantity);
+          setState((s) => ({ ...s, lines: s.lines.map((l) => (l.id === lineId ? { ...l, quantity: q } : l)) }));
+          try {
+            await setQuantity(lineId, q);
+          } finally {
+            await reload();
+          }
+        }),
+      setChecked: (lineId, checked) =>
+        withPending(async () => {
+          setState((s) => ({ ...s, lines: s.lines.map((l) => (l.id === lineId ? { ...l, idChecked: checked } : l)) }));
+          try {
+            await setIdChecked(lineId, checked);
+          } finally {
+            await reload();
+          }
+        }),
+      remove: (lineIds) =>
+        withPending(async () => {
+          setState((s) => ({ ...s, lines: s.lines.filter((l) => !lineIds.includes(l.id)) }));
+          try {
+            await removeLines(lineIds);
+          } finally {
+            await reload();
+          }
+        }),
     }),
-    [lines, status, reload, userId]
+    [lines, status, pending, reload, userId, withPending]
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

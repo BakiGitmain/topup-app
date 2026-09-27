@@ -418,8 +418,13 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
   },
-  button: { flex: 1, height: '100%', alignItems: 'center', justifyContent: 'center' },
-  iconWrap: { alignItems: 'center', justifyContent: 'center' },
+  // Both are pressed/animated (a Reanimated `transform: scale`, driven by our own press state, never a native
+  // ripple -- android_ripple is never set, so Android installs no touch-feedback drawable at all). Without an
+  // explicit backgroundColor, Android can promote a view that animates `transform` to its own hardware layer and
+  // rasterize the empty layer as solid black for the first composited frame, which reads as an inverted tab.
+  // 'transparent' keeps the real backdrop (the glass/blur behind it) showing through, on every platform.
+  button: { flex: 1, height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  iconWrap: { alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   dot: {
     position: 'absolute',
     top: -2,

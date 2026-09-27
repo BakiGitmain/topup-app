@@ -1,5 +1,5 @@
 import { Redirect, router, useLocalSearchParams } from 'expo-router';
-import { RefreshControl, ScrollView, StyleSheet } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState } from 'react';
 
@@ -14,9 +14,14 @@ import { BROWSE_CATEGORIES, fetchCatalog, type Product } from '../../lib/catalog
 import { useT } from '../../lib/i18n';
 import { colors, spacing } from '../../lib/theme';
 import { useAsync } from '../../lib/useAsync';
+import { GiftBanner } from '../../components/gift/GiftBanner';
+import { giftParams, readGiftParams, type GiftRouteParams } from '../../lib/giftMode';
 
 export default function CategoryScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id: string } & GiftRouteParams>();
+  const id = params.id;
+  // Gift mode passes through a category's full list too (see lib/giftMode).
+  const gift = readGiftParams(params);
   const t = useT();
   const insets = useSafeAreaInsets();
   const { session, initializing } = useAuth();
@@ -27,7 +32,7 @@ export default function CategoryScreen() {
   const products = (catalog.data ?? []).filter((p) => p.category === category);
 
   const open = (product: Product) =>
-    router.push({ pathname: '/product/[id]', params: { id: product.id } });
+    router.push({ pathname: '/product/[id]', params: { id: product.id, ...giftParams(gift) } });
 
   async function onRefresh() {
     setRefreshing(true);
@@ -57,6 +62,11 @@ export default function CategoryScreen() {
       >
         <Column>
           <ScreenHeader title={category ? t(`cat.${category}`) : ''} />
+          {gift && (
+            <View style={{ marginBottom: spacing.md }}>
+              <GiftBanner target={gift} />
+            </View>
+          )}
 
           {loading && <CatalogSkeleton />}
 

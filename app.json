@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "topup-app",
+    "name": "Portal Topup",
     "slug": "topup-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -42,7 +42,9 @@
           "microphonePermission": false
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "@react-native-community/datetimepicker",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,

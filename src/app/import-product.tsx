@@ -30,11 +30,14 @@ import {
   buildImportPayload,
   categoryKeyFor,
   costRange,
+  crossSupplierValidation,
   effectiveRow,
   formatUsdRange,
   groupByGame,
   initialRegionState,
   oldestDate,
+  ownValidation,
+  resolvedValidation,
   stalePriceWarnings,
   staleLevel,
   unreachableText,
@@ -46,17 +49,20 @@ import {
   type RegionChoice,
   type RegionState,
   type SupplierName,
+  type ValidationCandidate,
 } from '../lib/importPlan';
 import { parseRate, recalcDrafts } from '../lib/priceCalc';
 import {
   SEARCH_LIMIT,
   fetchCatalogStatus,
   fetchUsdRate,
+  fetchValidationCandidates,
   importProduct,
   loadOffers,
   refreshCatalog,
   saveUsdRate,
   searchCatalog,
+  searchLive,
 } from '../lib/supplierCatalog';
 import { colors, fonts, radius, spacing } from '../lib/theme';
 import { useToast } from '../lib/toast';
@@ -72,14 +78,25 @@ export default function ImportProductScreen() {
   const toast = useToast();
   const allowed = !initializing && !!session && isAdmin;
 
-  // Which supplier's saved catalog is searched and refreshed. Each import is from ONE supplier.
-  const [supplier, setSupplier] = useState<SupplierName>('fazercards');
-  const status = useAsync(() => fetchCatalogStatus(supplier), supplier, allowed);
+  // Which supplier's saved catalog is searched and refreshed. Each import is from ONE supplier, admin-picked; FazerCards'
+  // trial has ended and it is not one of the choices any more (see CLAUDE.md, 2026-09-22).
+  const [supplier, setSupplier] = useState<SupplierName>('shop2topup');
+  // GamesDrop's catalog (~64,000 offers) is too big to bulk-refresh (it alone took over 100s live, 2026-09-22): it has
+  // no cached-catalog card/button and every search calls it live, scoped to the typed query, instead.
+  const bulkCatalog = supplier !== 'gamesdrop';
+  const status = useAsync(() => fetchCatalogStatus(supplier), supplier, allowed && bulkCatalog);
   const [query, setQuery] = useState('');
   // One request per pause in typing (1.5 s), and none for fewer than two letters. Enter searches at once.
   const search = useDebouncedSearch(query.trim(), SEARCH_IDLE_MS);
   const debounced = search.value;
-  const results = useAsync(() => searchCatalog(debounced, supplier), `${supplier}|${debounced}`, allowed && debounced.length >= 2);
+  const results = useAsync(
+    async () => {
+      if (!bulkCatalog) await searchLive(supplier, debounced);
+      return searchCatalog(debounced, supplier);
+    },
+    `${supplier}|${debounced}`,
+    allowed && debounced.length >= 2
+  );
   const groups = useMemo(() => groupByGame(results.data ?? []), [results.data]);
 
   const [refreshing, setRefreshing] = useState(false);
@@ -88,6 +105,9 @@ export default function ImportProductScreen() {
   const [game, setGame] = useState<GameGroup | null>(null);
   const [name, setName] = useState('');
   const [regions, setRegions] = useState<Record<string, RegionState>>({});
+  // Every supplier's own validated category for the picked game (both suppliers), for offering a cross-supplier ID check.
+  // Fetched once per game; harmless if it never arrives (the picker just never appears, same as a game with no candidates).
+  const [validationCandidates, setValidationCandidates] = useState<ValidationCandidate[]>([]);
   const [art, setArt] = useState<PickedArtwork | null>(null);
   const [artError, setArtError] = useState<string | null>(null);
   // Card images picked for this product (uploaded when you save), and its categories.
@@ -190,6 +210,10 @@ export default function ImportProductScreen() {
     setProblems([]);
     setError(null);
     setPriceNote(null);
+    setValidationCandidates([]);
+    fetchValidationCandidates(group.name, group.family)
+      .then(setValidationCandidates)
+      .catch(() => setValidationCandidates([]));
   }
 
   const patchRegion = (id: string, patch: Partial<RegionState>) =>
@@ -254,11 +278,13 @@ export default function ImportProductScreen() {
       .map((r) => {
         const state = regions[r.category_id];
         const codes = parseRegionCodes(state.codesText);
+        const validation = resolvedValidation(ownValidation(r), crossSupplierValidation(r, validationCandidates), state.validationChoice);
         return {
           row: effectiveRow(r, state),
           label: state.label,
           codes: codes.codes,
           invalidCodes: codes.invalid,
+          validation,
           packs: (state.data?.offers ?? [])
             .filter((o) => state.packs[o.ref]?.ticked)
             .map((offer) => ({ offer, price: parsePrice(state.packs[offer.ref].price), categoryKey: state.packs[offer.ref].categoryKey ?? null })),
@@ -358,40 +384,46 @@ export default function ImportProductScreen() {
                   setRefreshNote(null);
                 }}
               />
-              <View style={[styles.card, styles.afterPills]}>
-                <Text style={styles.cardTitle}>{`Saved ${SUPPLIER_LABEL[supplier]} catalog`}</Text>
-                {status.status === 'loading' && !s && <ActivityIndicator color={colors.limeDeep} style={styles.spinner} />}
-                {status.status === 'error' && !s && <Text style={styles.muted}>{"Couldn't read the saved catalog. Go back and open this screen again."}</Text>}
-                {s && s.categories === 0 && (
-                  <Text style={styles.muted}>{`Nothing is saved from ${SUPPLIER_LABEL[supplier]} yet. Refresh the catalog to load it.`}</Text>
-                )}
-                {s && s.categories > 0 && (
-                  <>
-                    <FreshnessPill prefix="Catalog listed" iso={s.refreshedAt} neverText="Catalog never listed" />
-                    <Text style={styles.muted}>
-                      {`${s.categories} categories saved, ${s.blocked} hidden because they ask for a game password. Prices are saved for ${s.withPacks} of them, each with its own date.`}
-                    </Text>
-                    {staleLevel(s.refreshedAt) !== 'fresh' && (
-                      <Text style={styles.staleNote}>
-                        The supplier changes its catalog (categories get added and removed), so this list may not match it any more. Refresh it when you can.
+              {bulkCatalog ? (
+                <View style={[styles.card, styles.afterPills]}>
+                  <Text style={styles.cardTitle}>{`Saved ${SUPPLIER_LABEL[supplier]} catalog`}</Text>
+                  {status.status === 'loading' && !s && <ActivityIndicator color={colors.limeDeep} style={styles.spinner} />}
+                  {status.status === 'error' && !s && <Text style={styles.muted}>{"Couldn't read the saved catalog. Go back and open this screen again."}</Text>}
+                  {s && s.categories === 0 && (
+                    <Text style={styles.muted}>{`Nothing is saved from ${SUPPLIER_LABEL[supplier]} yet. Refresh the catalog to load it.`}</Text>
+                  )}
+                  {s && s.categories > 0 && (
+                    <>
+                      <FreshnessPill prefix="Catalog listed" iso={s.refreshedAt} neverText="Catalog never listed" />
+                      <Text style={styles.muted}>
+                        {`${s.categories} categories saved, ${s.blocked} hidden because they ask for a game password. Prices are saved for ${s.withPacks} of them, each with its own date.`}
                       </Text>
-                    )}
-                  </>
-                )}
-                <Button
-                  label="Refresh catalog"
-                  variant="outline"
-                  onPress={onRefreshCatalog}
-                  loading={refreshing}
-                  style={styles.refreshButton}
-                />
-                {refreshNote &&
-                  (refreshNote.ok ? (
-                    <Text style={styles.okNote} accessibilityRole="alert">{refreshNote.text}</Text>
-                  ) : (
-                    <ErrorBanner message={refreshNote.text} />
-                  ))}
-              </View>
+                      {staleLevel(s.refreshedAt) !== 'fresh' && (
+                        <Text style={styles.staleNote}>
+                          The supplier changes its catalog (categories get added and removed), so this list may not match it any more. Refresh it when you can.
+                        </Text>
+                      )}
+                    </>
+                  )}
+                  <Button
+                    label="Refresh catalog"
+                    variant="outline"
+                    onPress={onRefreshCatalog}
+                    loading={refreshing}
+                    style={styles.refreshButton}
+                  />
+                  {refreshNote &&
+                    (refreshNote.ok ? (
+                      <Text style={styles.okNote} accessibilityRole="alert">{refreshNote.text}</Text>
+                    ) : (
+                      <ErrorBanner message={refreshNote.text} />
+                    ))}
+                </View>
+              ) : (
+                <Text style={[styles.hint, styles.afterPills]}>
+                  {`${SUPPLIER_LABEL[supplier]}'s catalog is too large to save all at once, so search below calls it live for just what you type.`}
+                </Text>
+              )}
 
               <SearchBar value={query} onChangeText={setQuery} onSubmit={search.flush} placeholder="Search games and gift cards" />
 
@@ -399,11 +431,11 @@ export default function ImportProductScreen() {
               {search.pending && query.trim().length >= 2 && <Text style={styles.hint}>Searching when you stop typing… (Enter searches now)</Text>}
               {searching && results.status === 'loading' && !results.data && <ActivityIndicator color={colors.limeDeep} style={styles.spinner} />}
               {searching && results.status === 'error' && !results.data && (
-                <ErrorBanner message="Couldn't search the saved catalog. Check your connection and try again." />
+                <ErrorBanner message={bulkCatalog ? 'Couldn\'t search the saved catalog. Check your connection and try again.' : 'Couldn\'t search live. Check your connection and try again.'} />
               )}
               {searching && results.status === 'ready' && groups.length === 0 && (
                 <Text style={styles.hint}>
-                  {s && s.categories === 0 ? `The saved ${SUPPLIER_LABEL[supplier]} catalog is empty. Refresh it above.` : `Nothing in the catalog matches "${debounced}".`}
+                  {bulkCatalog && s && s.categories === 0 ? `The saved ${SUPPLIER_LABEL[supplier]} catalog is empty. Refresh it above.` : `Nothing in the catalog matches "${debounced}".`}
                 </Text>
               )}
               {(results.data?.length ?? 0) >= SEARCH_LIMIT && (
@@ -469,6 +501,7 @@ export default function ImportProductScreen() {
                   onRefresh={() => fetchRegion(row)}
                   categories={cats}
                   rate={rateValue}
+                  validationCandidates={validationCandidates}
                 />
               ))}
 

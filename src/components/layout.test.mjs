@@ -9,19 +9,30 @@ const read = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8');
 
 describe('ProductTile (the one shared game tile: home sections, search, category screen)', () => {
   const src = read('./market/ProductTile.tsx');
-  it('shows the artwork whole in a fixed-size rounded square: contained, never cropped or stretched', () => {
-    assert.match(src, /contentFit="contain"/);
-    assert.doesNotMatch(src, /contentFit="cover"/);
-    assert.doesNotMatch(src, /contentFit="fill"/);
-    assert.match(src, /styles\.art, \{ width: art, height: art,/);
-    assert.match(src, /borderRadius: 14/);
+  it('shows the artwork whole in a fixed-size rounded square: contained, never cropped or stretched (the shared ProductArt)', () => {
+    const art = read('./market/ProductArt.tsx');
+    assert.match(src, /<ProductArt name=\{product\.name\} imageUrl=\{product\.imageUrl\} tint=\{product\.tint\} size=\{art\}/);
+    assert.match(art, /contentFit="contain"/);
+    assert.doesNotMatch(art + src, /contentFit="cover"/);
+    assert.doesNotMatch(art + src, /contentFit="fill"/);
+    assert.match(art, /styles\.art, \{ width: size, height: size,/);
+    assert.match(art, /borderRadius: radius\.md/);
   });
   it('has TWO arrangements picked by its own width: a ROW (picture left, name right, centred) where there is room, a STACK (picture over name) where there is not', () => {
     assert.match(src, /tileLayout\(width\)/);
-    assert.match(src, /row: \{ \.\.\.box, flexDirection: 'row', alignItems: 'center'/);
+    assert.match(src, /row: \{ flexDirection: 'row', alignItems: 'center'/);
     assert.match(src, /nameRow: \{ flex: 1/);
-    assert.match(src, /stack: \{ \.\.\.box, alignItems: 'center'/);
+    assert.match(src, /stack: \{ alignItems: 'center'/);
     assert.match(src, /nameStack: \{ alignSelf: 'stretch', textAlign: 'center'/);
+  });
+  it('the tile has no card behind it (no background, no border) any more -- only the picture\'s own rounded corners, filling nearly the whole tile', () => {
+    assert.doesNotMatch(src, /backgroundColor: colors\.surface/);
+    for (const style of ['row', 'stack']) {
+      const block = new RegExp(`${style}: \\{[^}]*\\}`).exec(src)?.[0] ?? '';
+      assert.doesNotMatch(block, /borderWidth|borderColor|backgroundColor/, style);
+    }
+    const artBlock = /art: \{[^}]*\}/.exec(read('./market/ProductArt.tsx'))?.[0] ?? '';
+    assert.doesNotMatch(artBlock, /borderWidth|borderColor/, 'art');
   });
   it('has no scrim or overlaid text any more (the name is beside the picture, not on it)', () => {
     assert.doesNotMatch(src, /LinearGradient/);

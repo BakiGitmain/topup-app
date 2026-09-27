@@ -1,16 +1,17 @@
 // Edge Function: admin-only access to the supplier catalogs, saved in public.supplier_catalog.
 //
-// TWO suppliers: FazerCards (live products are built on it) and Shop2Topup (being tested alongside it). A request says which
-// one with `"supplier": "fazercards" | "shop2topup"` (default fazercards). Each supplier has its own key
-// (FAZER_API_KEY / SHOP2TOPUP_API_KEY), which lives only in this function's secrets: the app never sees either and never calls
-// a supplier. Every saved row carries its supplier and every read, write, count and delete here is scoped to it, so
-// refreshing one supplier can never touch the other's rows. Wholesale costs are saved in an admin-only table.
+// TWO live suppliers, admin-picked per import: Shop2Topup and GamesDrop (2026-09-22). FazerCards' trial has ended; it is
+// not offered anywhere any more, but FAZER_API_KEY is left configured (untouched, unused) in case it is wired back in
+// later -- nothing here reads it. The `supplier` field on a request is checked against a list (see router.ts), so a
+// fourth supplier is "write its handler, add it to the list", not a rebuild. Each key lives only in this function's
+// secrets: the app never sees either and never calls a supplier directly. Every saved row carries its supplier and every
+// read, write, count and delete here is scoped to it, so refreshing one supplier can never touch another's rows.
 //
 // Runs on Deno. The logic is in handler.ts (tested in Node); this file only wires it up.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { FazerCardsClient } from 'npm:fazercards@0.2.0';
 
-import { normalizeCategory, type CategoryRow, type Family, type OffersResult, type RawCategory } from '../_shared/catalog.ts';
+import type { CategoryRow, Family, OffersResult } from '../_shared/catalog.ts';
+import { GAMESDROP, createGamesDropClient, type GDOffer, normalizeGamesDropCategory, toRawCategories as gdToRawCategories, toRawOffers as gdToRawOffers } from '../_shared/gamesdrop.ts';
 import {
   createShop2TopupClient, fieldsFromRequirements, normalizeShop2TopupCategory, toRawCategories, toRawOffers,
 } from '../_shared/shop2topup.ts';
@@ -19,23 +20,15 @@ import { createRouter, type SupplierName } from './router.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-const FAZER_API_KEY = Deno.env.get('FAZER_API_KEY') ?? '';
 const SHOP2TOPUP_API_KEY = Deno.env.get('SHOP2TOPUP_API_KEY') ?? '';
+const GAMESDROP_API_KEY = Deno.env.get('GAMESDROP_API_KEY') ?? '';
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-// An admin is waiting, so a couple of tries is fine; the handler's own timeouts bound each step.
-const fazer = FAZER_API_KEY
-  ? new FazerCardsClient({ apiKey: FAZER_API_KEY, appName: 'topup-catalog/1.0', timeoutMs: 20_000, retries: 1 })
-  : null;
 const shop2topup = createShop2TopupClient({ key: SHOP2TOPUP_API_KEY, timeoutMs: 20_000 });
-
-function needFazer() {
-  if (!fazer) throw Object.assign(new Error('supplier key is not configured'), { status: 503 });
-  return fazer;
-}
+const gamesdrop = createGamesDropClient({ key: GAMESDROP_API_KEY, timeoutMs: 20_000 });
 
 const KEY = 'supplier,family,category_id';
 
@@ -121,33 +114,6 @@ function shared(supplier: SupplierName): Pick<
   };
 }
 
-// ---- FazerCards: exactly what it always did.
-const fazerHandler = createHandler({
-  ...shared('fazercards'),
-  normalizeCategory,
-
-  async listCategories(family: Family) {
-    const client = needFazer();
-    const out: RawCategory[] = [];
-    const pages = family === 'topups' ? client.topups.iterCategories({ limit: 100 }) : client.giftcards.iterCategories({ limit: 100 });
-    for await (const c of pages) {
-      out.push(c as unknown as RawCategory);
-      if (out.length >= 5000) break;
-    }
-    return out;
-  },
-
-  async listValidationGames() {
-    const result = await needFazer().topups.validateIdGames();
-    return (result as { items?: unknown[] }).items ?? [];
-  },
-
-  async fetchOffers(family: Family, categoryId: string) {
-    const client = needFazer();
-    return family === 'topups' ? await client.topups.offers(categoryId) : await client.giftcards.cards(categoryId);
-  },
-});
-
 // ---- Shop2Topup: its catalog is a tree (game > region variants > packs), listed a few games at a time.
 async function mapLimit<T, R>(items: readonly T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -193,4 +159,49 @@ const shop2topupHandler = createHandler({
   },
 });
 
-Deno.serve(createRouter({ fazercards: fazerHandler, shop2topup: shop2topupHandler }));
+// ---- GamesDrop: a flat list of every pack (no category tree of its own). Its full catalog is ~64,000 offers across 64
+// pages of /offers/sync, which measured 100-135+ seconds to pull live (2026-09-22) -- longer than refreshTimeoutMs, so
+// `refresh_catalog` for GamesDrop always timed out and never saved anything. There is deliberately no full-catalog pull
+// here any more: `search_catalog` (below) scopes every call to the admin's own query via /offers/sync's own `search`
+// param (confirmed server-side: "Blood Strike" -> 46 rows, a nonsense query -> 0, both in a few seconds, out of a
+// 63,829-row catalog), and `fetchOffers` (for "load offers" on one already-searched category) re-runs that same scoped
+// search by the category's saved game_name instead of ever touching the whole catalog.
+let gdSearchMemo: { query: string; at: number; rows: Promise<GDOffer[]> } | null = null;
+/** One page (limit 1000) is enough for a scoped query: "Blood Strike" matched 46 of the 63,829 total offers. Shared
+ * between the two searchLive calls one search_catalog request makes (topups, then giftcards) via a short memo, same
+ * pattern as Shop2Topup's `tree()` above. */
+function gamesdropSearch(query: string) {
+  if (!gdSearchMemo || gdSearchMemo.query !== query || Date.now() - gdSearchMemo.at > 5_000) {
+    gdSearchMemo = { query, at: Date.now(), rows: gamesdrop.sync({ search: query, limit: 1000, page: 1 }).then((r) => r.rows) };
+  }
+  return gdSearchMemo.rows;
+}
+
+const gamesdropHandler = createHandler({
+  ...shared(GAMESDROP),
+  normalizeCategory: (family, raw, ctx) => normalizeGamesDropCategory(family, raw, ctx),
+
+  // No bulk listing any more (see above): a fresh install has nothing until the admin searches for something.
+  async listCategories() {
+    return [];
+  },
+
+  async searchLive(family: Family, query: string) {
+    return gdToRawCategories(await gamesdropSearch(query), family);
+  },
+
+  // GamesDrop has no "which games can be checked" list: the games proven to validate are in _shared/gamesdrop.ts.
+  async listValidationGames() {
+    return [];
+  },
+
+  async fetchOffers(family: Family, categoryId: string) {
+    // Only reachable for a category search_catalog already saved (loadOffers 404s first otherwise), so its game_name is there.
+    const { data, error } = await admin.from('supplier_catalog').select('game_name').eq('supplier', GAMESDROP).eq('family', family).eq('category_id', categoryId).maybeSingle();
+    if (error) throw error;
+    if (!data?.game_name) return { offers: [], fields: [] };
+    return gdToRawOffers(family, await gamesdropSearch(data.game_name), categoryId);
+  },
+});
+
+Deno.serve(createRouter({ shop2topup: shop2topupHandler, gamesdrop: gamesdropHandler }));

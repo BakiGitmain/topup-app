@@ -22,7 +22,7 @@ export default function CustomerTabsLayout() {
       </View>
     );
   }
-  if (!session) return <Redirect href="/sign-in" />;
+  if (!session) return <Redirect href="/splash" />;
   // Any signed-in user may be here: admins open the customer app on purpose
   // (Me > Switch to customer view). The role wall is the *admin* group, which
   // sends customers out.
@@ -41,6 +41,7 @@ export default function CustomerTabsLayout() {
       icon: { outline: 'file-tray-full-outline', filled: 'file-tray-full' },
       badgeHint: (n) => t('a11y.newCodes', { n }),
     },
+    { route: 'wheel', label: t('tab.wheel'), icon: { outline: 'gift-outline', filled: 'gift' } },
     { route: 'profile', label: t('tab.profile'), avatar: true },
   ];
 
@@ -58,6 +59,7 @@ export default function CustomerTabsLayout() {
         name="vault"
         options={{ title: t('tab.vault'), tabBarBadge: newCodes > 0 ? newCodes : undefined }}
       />
+      <Tabs.Screen name="wheel" options={{ title: t('tab.wheel') }} />
       <Tabs.Screen name="profile" options={{ title: t('tab.profile') }} />
     </Tabs>
   );

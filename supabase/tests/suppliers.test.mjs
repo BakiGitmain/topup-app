@@ -4,7 +4,8 @@ import { PGlite } from '@electric-sql/pglite';
 import fs from 'node:fs';
 
 const read = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
-const MIGRATIONS = fs.readdirSync(new URL('../migrations/', import.meta.url)).filter((f) => f.endsWith('.sql')).sort().map((f) => read(`migrations/${f}`));
+const MIGRATION_FILES = fs.readdirSync(new URL('../migrations/', import.meta.url)).filter((f) => f.endsWith('.sql')).sort();
+const MIGRATIONS = MIGRATION_FILES.map((f) => read(`migrations/${f}`));
 
 const db = new PGlite();
 await db.exec(`
@@ -30,8 +31,13 @@ async function rejects(n, role, uid, sql, re, params) {
 const one = async (sql, p) => (await db.query(sql, p)).rows[0];
 
 for (const m of MIGRATIONS) await db.exec(m);
-// the three new migrations can be applied a second time without error (each says 'safe to re-run')
-for (const m of MIGRATIONS.slice(-3)) await db.exec(m);
+// The three creator-commission migrations can be applied a second time without error (each says 'safe to
+// re-run') -- but only together, in order: 20261008090000's own migrate-before-drop logic reads a column that
+// only exists because 20261007090000 just (re-)created it in the same pass. Selected by filename, not
+// `.slice(-3)` -- a positional slice breaks the moment any migration is added after these three (confirmed: it
+// silently drops 20261007090000 out of the window, and 20261008090000 then fails on the re-run alone).
+const THREE = ['20261007090000', '20261008090000', '20261009090000'];
+for (const f of THREE) await db.exec(read(`migrations/${MIGRATION_FILES.find((n) => n.startsWith(f))}`));
 
 const U = (await one(`insert into auth.users (email) values ('u@x.com') returning id`)).id;
 const A = (await one(`insert into auth.users (email) values ('a@x.com') returning id`)).id;
@@ -158,6 +164,68 @@ console.log('\n# validate-id is told which supplier to ask (id_validation_target
   ok('...and is routed to Shop2Topup', (await as('service_role', null, `select public.id_validation_supplier($1) s`, [r])).rows[0].s === 'shop2topup');
 }
 
+console.log('\n# validation_supplier: WHO checks a region\'s IDs, independent of who its packs come from');
+{
+  const cols = Object.keys(await one(`select * from product_region_supplier limit 1`));
+  ok('the column exists on the table', cols.includes('validation_supplier'), cols.join());
+}
+{
+  // unknown values are refused, same shape as the `supplier` column
+  let err = null;
+  try { await db.query(`update product_region_supplier set validation_supplier = 'mpesa' where category_id = '4' and supplier = 'shop2topup'`); } catch (e) { err = e; }
+  ok('an unknown validation_supplier is refused', err && /validation_supplier_check|check constraint/.test(err.message), err?.message);
+  await db.query(`update product_region_supplier set validation_supplier = null where category_id = '4' and supplier = 'shop2topup'`);
+  ok('null is fine (it means "same as supplier")', true);
+}
+{
+  // Blood Strike's real shape: packs from FazerCards, checked by Shop2Topup, in Shop2Topup's OWN category namespace (445),
+  // which has nothing to do with FazerCards' 'blood_strike_mena' and no pack of Blood Strike is linked to Shop2Topup at all.
+  const blood = await doImport(payload(
+    { code: 'mena', category_id: 'blood_strike_mena', validation_supplier: 'shop2topup', id_validation: 'supplier', validation_category_id: '445', packs: [pack('51_gold', '51 GOLD', { cost_usd: '0.4280' })] },
+    { name: 'Blood Strike' }
+  ));
+  const region = (await one(`select id from product_regions where product_id = $1`, [blood])).id;
+  const link = await one(`select supplier, category_id, validation_supplier, validation_category_id from product_region_supplier where region_id = $1`, [region]);
+  ok('the region\'s packs stay FazerCards; its check is tagged Shop2Topup, in Shop2Topup\'s own category', link.supplier === 'fazercards' && link.category_id === 'blood_strike_mena' && link.validation_supplier === 'shop2topup' && link.validation_category_id === '445', JSON.stringify(link));
+  const packLink = await one(`select supplier from product_option_supplier s join product_options o on o.id = s.option_id where o.region_id = $1`, [region]);
+  ok('...and its ONE pack is still linked to FazerCards: validation never touches fulfilment', packLink.supplier === 'fazercards');
+  await db.exec(`update products set is_active = true where id = '${blood}'; update product_regions set is_active = true where product_id = '${blood}'`);
+  ok('id_validation_supplier() routes the check to Shop2Topup although fulfilment is FazerCards', (await as('service_role', null, `select public.id_validation_supplier($1) s`, [region])).rows[0].s === 'shop2topup');
+  const target = (await as('service_role', null, `select * from id_validation_target($1)`, [region])).rows[0];
+  ok('id_validation_target carries Shop2Topup\'s OWN category id (445), not a FazerCards one', target.validation_category_id === '445' && target.id_validation === 'supplier');
+  // proves the consistency trigger (fulfilment supplier <-> its packs) is genuinely untouched by this: no Shop2Topup pack
+  // exists anywhere in this product, yet saving a region with validation_supplier='shop2topup' was accepted without complaint.
+  ok('no pack of this product is linked to Shop2Topup at all (the guard trigger never objected)', (await one(`select count(*)::int c from product_option_supplier s join product_options o on o.id = s.option_id where o.product_id = $1 and s.supplier = 'shop2topup'`, [blood])).c === 0);
+}
+{
+  // an unknown validation_supplier in the IMPORT payload is refused, same shape as an unknown `supplier`
+  await rejectsImport('an unknown validation_supplier in the payload is refused', payload({ code: 'x', category_id: 'y', validation_supplier: 'mpesa' }, { name: 'Bad' }), /import_invalid/);
+}
+{
+  // a region that does NOT check IDs: a validation_supplier in the payload is accepted but stored as null (nothing to route)
+  const off = await doImport(payload({ code: 'x2', category_id: 'y2', id_validation: 'none', validation_supplier: 'shop2topup' }, { name: 'NoCheck' }));
+  const link = await one(`select r.id_validation, s.validation_supplier from product_regions r join product_region_supplier s on s.region_id = r.id where r.product_id = $1`, [off]);
+  ok('a validation_supplier on a region that does not check IDs is dropped, not stored', link.id_validation === 'none' && link.validation_supplier === null, JSON.stringify(link));
+}
+{
+  // Free Fire / PUBG shaped: no validation_supplier in the payload at all -> still routes to the SAME supplier as fulfilment
+  // (their real live shape today: fulfilment AND validation both Shop2Topup).
+  const ff = await doImport(payload({ code: 'ffmena', category_id: '4', validation_category_id: '4', id_validation: 'supplier', supplier: 'shop2topup', packs: [pack('29', '210 + 21 Diamonds')] }, { name: 'Free Fire' }));
+  const region = (await one(`select id from product_regions where product_id = $1`, [ff])).id;
+  await db.exec(`update products set is_active = true where id = '${ff}'; update product_regions set is_active = true where product_id = '${ff}'`);
+  ok('Free Fire (Shop2Topup fulfilment, no override): checks route to Shop2Topup, unchanged from before this migration', (await as('service_role', null, `select public.id_validation_supplier($1) s`, [region])).rows[0].s === 'shop2topup');
+  const link = await one(`select validation_supplier from product_region_supplier where region_id = $1`, [region]);
+  ok('...and the column is simply null: nothing new was invented for it', link.validation_supplier === null);
+}
+{
+  // explicitly picking the SAME supplier back (as the import screen does when an admin re-selects the default) is
+  // stored and still routes correctly -- it is not required to be null, just equivalent.
+  const same = await doImport(payload({ code: 'x3', category_id: 'y3', id_validation: 'supplier', validation_category_id: 'y3', validation_supplier: 'fazercards' }, { name: 'SameChoice' }));
+  const region = (await one(`select id from product_regions where product_id = $1`, [same])).id;
+  await db.exec(`update products set is_active = true where id = '${same}'; update product_regions set is_active = true where product_id = '${same}'`);
+  ok('explicitly picking the same supplier as fulfilment still routes there', (await as('service_role', null, `select public.id_validation_supplier($1) s`, [region])).rows[0].s === 'fazercards');
+}
+
 console.log('\n# the exchange rate');
 ok('it starts at 175', Number((await as('authenticated', A, `select usd_to_birr r from pricing_settings`)).rows[0].r) === 175);
 await as('authenticated', A, `update pricing_settings set usd_to_birr = 181.5 where id`);
@@ -175,6 +243,47 @@ await rejects('and it cannot be deleted', 'authenticated', A, `delete from prici
   let err = null;
   try { await db.query(`insert into pricing_settings (id, usd_to_birr) values (false, 10)`); } catch (e) { err = e; }
   ok('(even for the table owner, a second row is impossible)', err && /check constraint|duplicate|violates/.test(err.message), err?.message);
+}
+
+console.log('\n# gamesdrop: a third known supplier, FazerCards kept only for its historical rows');
+{
+  const gd = await doImport(payload(
+    { code: 'gd', category_id: '491', supplier: 'shop2topup', validation_supplier: 'gamesdrop', id_validation: 'supplier', validation_category_id: '2733', validation_field_map: { player_id: 'gameUserId' }, packs: [pack('gd_pack', 'GamesDrop-checked pack')] },
+    { name: 'GamesDrop Checked' }
+  ));
+  const region = (await one(`select id from product_regions where product_id = $1`, [gd])).id;
+  const link = await one(`select supplier, category_id, validation_supplier, validation_category_id, validation_field_map from product_region_supplier where region_id = $1`, [region]);
+  ok('fulfilment stays Shop2Topup while validation is GamesDrop, decoupled exactly like the Blood Strike case', link.supplier === 'shop2topup' && link.validation_supplier === 'gamesdrop' && link.validation_category_id === '2733');
+  ok('the field map GamesDrop needs is stored verbatim', JSON.stringify(link.validation_field_map) === JSON.stringify({ player_id: 'gameUserId' }));
+  await db.exec(`update products set is_active = true where id = '${gd}'; update product_regions set is_active = true where product_id = '${gd}'`);
+  ok('id_validation_supplier() routes there', (await as('service_role', null, `select public.id_validation_supplier($1) s`, [region])).rows[0].s === 'gamesdrop');
+}
+{
+  const direct = await doImport(payload({ code: 'gd2', category_id: 'gdcat', supplier: 'gamesdrop', packs: [pack('gdo1', 'A GamesDrop pack')] }, { name: 'GamesDrop Direct' }));
+  const l = await links(direct);
+  ok('gamesdrop packs and fulfilment can be imported directly too, not only as a validation supplier', l.region[0].supplier === 'gamesdrop' && l.packs[0].supplier === 'gamesdrop');
+}
+await rejectsImport('an unknown supplier is still refused the same way (gamesdrop existing did not loosen this)', payload({ supplier: 'mpesa' }), /import_invalid/);
+{
+  let err = null;
+  try { await db.query(`insert into supplier_catalog (supplier, family, category_id, name, game_name) values ('gamesdrop', 'topups', 'gdcheck', 'x', 'x')`); } catch (e) { err = e; }
+  ok('supplier_catalog accepts gamesdrop rows', !err, err?.message);
+}
+{
+  let err = null;
+  try { await db.query(`insert into blocked_supplier_categories (supplier, family, category_id, reason) values ('gamesdrop', 'topups', 'gdblock', 'test')`); } catch (e) { err = e; }
+  ok('blocked_supplier_categories accepts gamesdrop rows too', !err, err?.message);
+}
+ok('fazercards is still an accepted value (its historical supplier_catalog/blocklist rows are meant to be left alone, not orphaned)', await (async () => {
+  await db.exec(`insert into supplier_catalog (supplier, family, category_id, name, game_name) values ('fazercards', 'topups', 'histcheck', 'x', 'x')`);
+  return (await one(`select count(*)::int c from supplier_catalog where supplier = 'fazercards' and category_id = 'histcheck'`)).c === 1;
+})());
+{
+  // a region and its packs still have to agree, gamesdrop included
+  const opt = (await one(`select o.id from product_options o join product_regions r on r.id = o.region_id join products p on p.id=r.product_id where p.name = 'GamesDrop Direct'`)).id;
+  let err = null;
+  try { await db.query(`update product_option_supplier set supplier = 'shop2topup' where option_id = $1`, [opt]); } catch (e) { err = e; }
+  ok('the fulfilment consistency trigger applies to gamesdrop exactly like the other two', err && /supplier_mismatch/.test(err.message), err?.message);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

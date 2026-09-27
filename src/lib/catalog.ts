@@ -30,12 +30,14 @@ export type Product = {
 };
 
 /**
- * Games (diamonds, UC...) are topped up to a player's game ID by an admin.
- * Everything else is delivered as a code into the customer's vault. The
- * database makes the same call from the category, so this only drives the UI.
+ * Direct-to-account delivery (games' diamonds/UC, airtime, subscriptions like Telegram Premium) is topped up to a
+ * player ID/username by an admin. Everything else (gift cards, game keys) is a code delivered into the customer's
+ * vault, with no account to identify. This is only the FALLBACK for a product with no region (see product/[id].tsx:
+ * a region's own `buyer_fields`, set per-category at import time -- empty for 'giftcards', non-empty for 'topups' --
+ * already drives the ID step for every current, region-based product; this function is never consulted for those).
  */
 export function needsAccountId(category: Category) {
-  return category === 'games' || category === 'airtime';
+  return category === 'games' || category === 'airtime' || category === 'subscriptions';
 }
 
 type OptionRow = {

@@ -90,6 +90,7 @@ function CustomerRow({ customer }: { customer: Customer }) {
         <Text style={styles.name} numberOfLines={1}>
           {customer.display_name || customer.email || 'Customer'}
           {customer.role === 'admin' ? '  ·  admin' : ''}
+          {customer.is_content_creator ? '  ·  creator' : ''}
         </Text>
         <Text style={styles.email} numberOfLines={1}>
           {customer.email ?? ''}

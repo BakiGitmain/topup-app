@@ -9,10 +9,15 @@
 
 export type CatalogFamily = 'topups' | 'giftcards';
 
-/** The suppliers the shop can import from. A region's category and packs always belong to exactly one of them. */
-export type SupplierName = 'fazercards' | 'shop2topup';
-export const SUPPLIERS: readonly SupplierName[] = ['fazercards', 'shop2topup'];
-export const SUPPLIER_LABEL: Readonly<Record<SupplierName, string>> = { fazercards: 'FazerCards', shop2topup: 'Shop2Topup' };
+/**
+ * Every supplier a category/pack link can name. `SupplierName` stays wider than the admin can actually PICK: FazerCards'
+ * trial has ended (see CLAUDE.md, 2026-09-22) and it is not offered anywhere any more, but its historical
+ * `supplier_catalog` rows are left alone, so the type still needs to hold that value.
+ */
+export type SupplierName = 'fazercards' | 'shop2topup' | 'gamesdrop';
+/** The suppliers the admin can actually pick per import, in the order shown. FazerCards is deliberately not here. */
+export const SUPPLIERS: readonly SupplierName[] = ['shop2topup', 'gamesdrop'];
+export const SUPPLIER_LABEL: Readonly<Record<SupplierName, string>> = { fazercards: 'FazerCards', shop2topup: 'Shop2Topup', gamesdrop: 'GamesDrop' };
 
 export type BuyerField = { key: string; label: string; type: string; options?: Record<string, unknown>[] };
 export type CatalogOffer = { ref: string; name: string; cost_usd: string; stock?: number };
@@ -143,6 +148,59 @@ export type RegionDefaults = {
 };
 
 /**
+ * Which supplier answers a region's ID check, and its own category/form for doing so. Independent of which supplier the
+ * packs come from: FazerCards can be cheaper for a game while having no check for it, and Shop2Topup can check it. A
+ * region's fulfilment (packs, prices) and its validation are two separate choices; this is the validation half.
+ */
+export type ValidationCandidate = {
+  supplier: SupplierName;
+  validation_category_id: string;
+  validation_fields: BuyerField[];
+  note_region: string | null;
+};
+
+/** This row's own validation, if the supplier it was fetched from can check this game's IDs. */
+export function ownValidation(row: Pick<CatalogRow, 'supplier' | 'validation_category_id' | 'validation_fields' | 'note_region'>): ValidationCandidate | null {
+  return row.validation_category_id && row.validation_fields
+    ? { supplier: row.supplier ?? 'fazercards', validation_category_id: row.validation_category_id, validation_fields: row.validation_fields, note_region: row.note_region }
+    : null;
+}
+
+/**
+ * The best candidate from a DIFFERENT supplier than this row's own, for offering "this supplier can't check IDs for this
+ * game, but the other one can" (candidates come from public.supplier_catalog for every supplier, see supplierCatalog.ts).
+ * Prefers one whose region matches this row's; else one with no region (global); else the first. Null with no other supplier.
+ */
+export function crossSupplierValidation(
+  row: Pick<CatalogRow, 'supplier' | 'note_region'>,
+  candidates: readonly ValidationCandidate[]
+): ValidationCandidate | null {
+  const mine = row.supplier ?? 'fazercards';
+  const others = candidates.filter((c) => c.supplier !== mine);
+  if (others.length === 0) return null;
+  const region = row.note_region?.trim().toUpperCase() ?? '';
+  const sameRegion = region !== '' ? others.find((c) => (c.note_region?.trim().toUpperCase() ?? '') === region) : undefined;
+  return sameRegion ?? others.find((c) => !c.note_region) ?? others[0];
+}
+
+/**
+ * What actually validates a region: the admin's explicit choice between `own` and `cross`, else `own` (unchanged default).
+ * `choice: null` is an explicit "don't check IDs for this game" even when a candidate exists. A choice matching neither
+ * candidate (stale data) falls back to `own` rather than silently validating with nothing or the wrong supplier.
+ */
+export function resolvedValidation(
+  own: ValidationCandidate | null,
+  cross: ValidationCandidate | null,
+  choice: SupplierName | null | undefined
+): ValidationCandidate | null {
+  if (choice === undefined) return own;
+  if (choice === null) return null;
+  if (own && own.supplier === choice) return own;
+  if (cross && cross.supplier === choice) return cross;
+  return own;
+}
+
+/**
  * Purchase form key -> the key the supplier's ID check expects, where they differ (Mobile Legends buys with
  * server_id but validates with zone_id). Only an unambiguous pairing counts; anything else is null and the
  * region falls back to the customer's tick.
@@ -167,22 +225,29 @@ export function mapValidationFields(purchase: readonly BuyerField[], check: read
  *  - Codes are prefilled only for regions with a confirmed code. Everything else imports locked with no
  *    codes, and stays off until they are typed. A code is never guessed.
  * Needs the category's packs to have been fetched (that is where its buyer form comes from).
+ *
+ * `validation` is what actually answers the ID check: it defaults to the row's own data (unchanged behaviour), but can be a
+ * DIFFERENT supplier's candidate (see ValidationCandidate above), or null for "don't check IDs for this game at all".
  */
-export function regionDefaults(row: Pick<CatalogRow, 'family' | 'validation_category_id' | 'validation_fields' | 'note_region' | 'fields'>): RegionDefaults {
+export function regionDefaults(
+  row: Pick<CatalogRow, 'family' | 'validation_category_id' | 'validation_fields' | 'note_region' | 'fields'>,
+  validation?: Pick<CatalogRow, 'validation_category_id' | 'validation_fields' | 'note_region'> | null
+): RegionDefaults {
+  const v = validation === undefined ? row : validation;
   const none: RegionDefaults = { idMode: 'none', validationCategoryId: null, validationFieldMap: {}, locked: false, codes: [], idCheckNote: null };
   if (row.family !== 'topups') return none;
-  if (!row.validation_category_id || !row.validation_fields) return none;
+  if (!v || !v.validation_category_id || !v.validation_fields) return none;
 
-  const map = mapValidationFields(row.fields ?? [], row.validation_fields);
+  const map = mapValidationFields(row.fields ?? [], v.validation_fields);
   if (map === null) {
     return { ...none, idCheckNote: "The supplier can check this game's IDs, but not from this form, so customers will tick that they checked their ID." };
   }
 
-  const region = row.note_region?.trim() ?? '';
+  const region = v.note_region?.trim() ?? '';
   // "Global" (FazerCards) and "Worldwide" (Shop2Topup) both mean any account can use it: nothing to lock.
   const locked = region !== '' && !['GLOBAL', 'WORLDWIDE'].includes(region.toUpperCase());
   const codes = locked ? [...(KNOWN_ACCOUNT_REGION_CODES[region.toUpperCase()] ?? [])] : [];
-  return { idMode: 'supplier', validationCategoryId: row.validation_category_id, validationFieldMap: map, locked, codes, idCheckNote: null };
+  return { idMode: 'supplier', validationCategoryId: v.validation_category_id, validationFieldMap: map, locked, codes, idCheckNote: null };
 }
 
 // ---------------------------------------------------------------- names
@@ -246,6 +311,9 @@ export type RegionChoice = {
   codes: string[];
   /** Anything in the typed codes that isn't a plain short code. */
   invalidCodes: string[];
+  /** What checks this region's IDs. Omitted (or undefined) = the row's own supplier, unchanged. Null = don't check. A
+   * candidate from a different supplier than `row.supplier` validates with THAT supplier while packs still come from `row`'s. */
+  validation?: ValidationCandidate | null;
 };
 
 export type ImportInput = {
@@ -277,6 +345,8 @@ export type ImportPayload = {
     validation_field_map: Record<string, string>;
     /** Which supplier the category and every pack below belong to. */
     supplier: SupplierName;
+    /** Which supplier checks this region's IDs, only when it differs from `supplier` above. Omitted = the same supplier. */
+    validation_supplier?: SupplierName;
     packs: {
       offer_ref: string;
       offer_name: string;
@@ -338,7 +408,8 @@ export function buildImportPayload(input: ImportInput): PlanResult {
       problems.push(`"${where}": its packs haven't been loaded yet.`);
       continue;
     }
-    const defaults = regionDefaults(row);
+    const validationSource = region.validation === undefined ? row : region.validation;
+    const defaults = regionDefaults(row, validationSource);
     const codes = defaults.locked ? region.codes : [];
     if (!defaults.locked && region.codes.length > 0) warnings.push(`"${where}" isn't region-locked, so its account regions were ignored.`);
     if (defaults.locked && codes.length === 0) warnings.push(`"${where}" is region-locked but has no account regions, so its packs stay off until you add them.`);
@@ -369,6 +440,10 @@ export function buildImportPayload(input: ImportInput): PlanResult {
 
     const code = regionCodeFor(label, row.category_id, used);
     used.add(code);
+    const fulfilmentSupplier = row.supplier ?? 'fazercards';
+    // Only worth telling the database when it differs from the packs' own supplier; that "no tag" default is what every
+    // earlier import (and every product whose validation was never overridden) already relies on.
+    const crossSupplier = region.validation && region.validation.supplier !== fulfilmentSupplier ? region.validation.supplier : null;
     regions.push({
       code,
       label,
@@ -378,7 +453,8 @@ export function buildImportPayload(input: ImportInput): PlanResult {
       category_id: row.category_id,
       validation_category_id: defaults.validationCategoryId,
       validation_field_map: defaults.validationFieldMap,
-      supplier: row.supplier ?? 'fazercards',
+      supplier: fulfilmentSupplier,
+      ...(crossSupplier ? { validation_supplier: crossSupplier } : {}),
       packs,
     });
   }
@@ -488,6 +564,17 @@ export function parseRefresh(body: unknown): RefreshOutcome {
   return { kind: 'error' };
 }
 
+export type SearchLiveOutcome = { kind: 'ok'; categories: number } | { kind: 'unavailable'; reason: 'refused' | 'timeout' | 'error' } | { kind: 'error' };
+
+/** search_catalog's reply (see supabase/functions/supplier-catalog/handler.ts): a supplier with no live search
+ * (Shop2Topup) or a bad request both come back as 'error' here, same as any other unparseable body. */
+export function parseSearchLive(body: unknown): SearchLiveOutcome {
+  if (!isRecord(body)) return { kind: 'error' };
+  if (body.status === 'ok' && typeof body.categories === 'number') return { kind: 'ok', categories: body.categories };
+  if (body.status === 'unavailable') return { kind: 'unavailable', reason: body.reason === 'refused' || body.reason === 'timeout' ? body.reason : 'error' };
+  return { kind: 'error' };
+}
+
 /** What to tell the admin when the supplier can't be reached and saved data is shown instead. */
 export function unreachableText(reason: 'refused' | 'timeout' | 'error'): string {
   if (reason === 'refused') return 'The supplier refused the request (the trial may have ended).';
@@ -511,6 +598,9 @@ export type RegionState = {
   data: RegionData | null;
   busy: boolean;
   notice: string | null;
+  /** The admin's explicit pick of who validates this region's IDs. Undefined = the row's own supplier (unchanged default);
+   * null = explicitly don't check; a SupplierName = use that candidate's category instead (see resolvedValidation). */
+  validationChoice?: SupplierName | null;
 };
 
 /** What a region starts as. The account regions start as the region's own defaults (ME for MENA, else empty). */

@@ -1,34 +1,34 @@
 // Edge Function: validate a player ID with the supplier and, if it is valid, record it.
 //
-// Each region's ID check is routed to the supplier its pack data belongs to (product_region_supplier.supplier):
-// FazerCards, or Shop2Topup. The supplier keys (FAZER_API_KEY, SHOP2TOPUP_API_KEY) live only in this function's secrets.
-// The app never sees them, never calls a supplier, and never learns wholesale prices: it gets back the player's
-// name, the account's region, and a record id, nothing else. A game a supplier can't check is imported as "the customer
-// ticks" and never reaches this function.
+// Each region's ID check is routed to its VALIDATION supplier (id_validation_supplier(), independent of which supplier its
+// packs come from -- see product_region_supplier.validation_supplier). Shop2Topup and GamesDrop are the two live suppliers
+// (2026-09-22); FazerCards' trial has ended and it is no longer called here, even for a region whose packs still come from
+// it (Blood Strike: Shop2Topup packs, GamesDrop check). FAZER_API_KEY is left configured (untouched, unused) in case
+// FazerCards is wired back in later; nothing here reads it. Each supplier's key lives only in this function's secrets: the
+// app never sees either, never calls a supplier directly, and never learns wholesale prices: it gets back the player's
+// name, the account's region, and a record id, nothing else. A game with no check reaches this function only if
+// id_validation is wrongly 'supplier'; routeValidation refuses an unknown target supplier rather than guessing, so that
+// can never silently validate against the wrong game's IDs.
 //
 // Runs on Deno. The logic is in handler.ts (tested in Node); this file only wires it up.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { FazerCardsClient } from 'npm:fazercards@0.2.0';
 
+import { GDError, createGamesDropClient } from '../_shared/gamesdrop.ts';
 import { S2Error, categoriesForCheck, createShop2TopupClient, validateWithAnyPack } from '../_shared/shop2topup.ts';
 import { createHandler, type Target } from './handler.ts';
 import { routeValidation } from './route.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-const FAZER_API_KEY = Deno.env.get('FAZER_API_KEY') ?? '';
 const SHOP2TOPUP_API_KEY = Deno.env.get('SHOP2TOPUP_API_KEY') ?? '';
+const GAMESDROP_API_KEY = Deno.env.get('GAMESDROP_API_KEY') ?? '';
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-// One quick try: the customer has a Retry button, and a long wait is worse than a fast "couldn't check".
-const supplier = FAZER_API_KEY
-  ? new FazerCardsClient({ apiKey: FAZER_API_KEY, appName: 'topup-validate/1.0', timeoutMs: 12_000, retries: 0 })
-  : null;
-
 const shop2topup = createShop2TopupClient({ key: SHOP2TOPUP_API_KEY, timeoutMs: 12_000 });
+const gamesdrop = createGamesDropClient({ key: GAMESDROP_API_KEY, timeoutMs: 12_000 });
 
 // Shop2Topup checks an ID against a PACK, not a category. The packs to try come from the saved catalog (or, if that category
 // was never opened, from the supplier), and are remembered for ten minutes so one check costs one request.
@@ -70,6 +70,17 @@ async function validateWithShop2Topup(categoryId: string, fields: Record<string,
   return await validateWithAnyPack(shop2topup, await packsOf(categoryId), { playerId, zoneId: fields.zone_id }, 4);
 }
 
+// GamesDrop checks an ID against one fixed OFFER (validation_category_id holds that offerId, as text). Unlike Shop2Topup
+// there is no signal that tells "this offer is unavailable" apart from "that ID is wrong" (both answer INVALID), so there
+// is no try-another-pack fallback here: this only ever checks the one offerId a region was imported with.
+async function validateWithGamesDrop(categoryId: string, fields: Record<string, string>): Promise<unknown> {
+  const offerId = Number(categoryId);
+  if (!Number.isInteger(offerId) || offerId <= 0) throw new GDError('not a numeric offer id', 503, 'BAD_OFFER_ID');
+  const gameUserId = fields.gameUserId;
+  if (!gameUserId) throw new GDError('no player id', 503, 'MISSING_REQUIRED_FIELD');
+  return await gamesdrop.checkGameData({ offerId, gameUserId, gameServerId: fields.gameServerId });
+}
+
 Deno.serve(
   createHandler({
     timeoutMs: 13_000,
@@ -90,19 +101,17 @@ Deno.serve(
       if (error) throw error;
       const row = ((data as Target[] | null) ?? [])[0] ?? null;
       if (!row) return null;
-      // Which supplier the region's pack data belongs to. No tag (null) means FazerCards, as before suppliers were named.
+      // Which supplier CHECKS this region's IDs (validation_supplier, or the packs' own supplier when that is unset).
       const which = await admin.rpc('id_validation_supplier', { p_region_id: regionId });
       if (which.error) throw which.error;
       return { ...row, supplier: (which.data as string | null) ?? null };
     },
 
-    // The region's own supplier decides where the check goes (see route.ts).
+    // The region's validation supplier decides where the check goes (see route.ts). FazerCards is not in this list any
+    // more: a region routed there (none, today) gets "could not check" (503), never a silent fallback.
     supplierValidate: routeValidation({
-      fazercards: async (categoryId, fields) => {
-        if (!supplier) throw Object.assign(new Error('supplier key is not configured'), { status: 503 });
-        return await supplier.topups.validateId({ categoryId, fields });
-      },
       shop2topup: validateWithShop2Topup,
+      gamesdrop: validateWithGamesDrop,
     }),
 
     async record(userId, regionId, fields, accountRegion, playerName) {

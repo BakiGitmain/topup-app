@@ -1,9 +1,10 @@
 import { useScrollToTop } from 'expo-router';
-import { useRef, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing } from '../../lib/theme';
+import { useScrollContainer, type ScrollContainer } from '../../lib/useScrollToHighlight';
 import { useTabBarHeight } from '../nav/tabBarMetrics';
 
 export const MAX_COLUMN_WIDTH = 480;
@@ -14,6 +15,8 @@ type Props = {
   onRefresh?: () => void;
   /** Indices of children that stick to the top while scrolling. */
   stickyHeaderIndices?: number[];
+  /** Lets useScrollToHighlight scroll this area (see useScrollContainer). */
+  container?: ScrollContainer;
 };
 
 /**
@@ -22,15 +25,18 @@ type Props = {
  * when the active tab is tapped again. Put each section in a <Column> so
  * content stays centered on wide screens.
  */
-export function TabScroll({ children, refreshing = false, onRefresh, stickyHeaderIndices }: Props) {
-  const scrollRef = useRef<ScrollView>(null);
-  useScrollToTop(scrollRef);
+export function TabScroll({ children, refreshing = false, onRefresh, stickyHeaderIndices, container }: Props) {
+  // Without a container from the screen, a private one: scroll-to-top and the highlight share the same ref.
+  const own = useScrollContainer();
+  const scroll = container ?? own;
+  useScrollToTop(scroll.scrollView);
   const barHeight = useTabBarHeight();
+  useEffect(() => scroll.setInsetBottom(barHeight + spacing.md), [scroll, barHeight]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
-        ref={scrollRef}
+        {...scroll.props}
         style={styles.flex}
         contentContainerStyle={[styles.content, { paddingBottom: barHeight + spacing.md }]}
         stickyHeaderIndices={stickyHeaderIndices}

@@ -1,3 +1,4 @@
+import { triggerFulfillment } from './fulfillment';
 import { parseVerifyAnswer, type ProviderId, type VerifyAnswer } from './paymentView';
 import { supabase } from './supabase';
 import { parseWalletFailure, type DepositStatus, type WalletErrorCode, type WithdrawalStatus } from './walletLogic';
@@ -6,7 +7,7 @@ import { parseWalletFailure, type DepositStatus, type WalletErrorCode, type With
 // reads the balance and the ledger and asks those functions to act; it never writes either, and the Telegram side is
 // entirely server-side (the app never knows the bot exists).
 
-export type TransactionKind = 'deposit' | 'purchase' | 'refund' | 'adjustment' | 'withdrawal';
+export type TransactionKind = 'deposit' | 'purchase' | 'refund' | 'adjustment' | 'withdrawal' | 'portal_coin_redemption' | 'commission';
 
 export type Transaction = {
   id: string;
@@ -28,7 +29,15 @@ type TransactionRow = {
   created_at: string;
 };
 
-export async function fetchTransactions(userId: string, limit = 30): Promise<Transaction[]> {
+/** How far back the list may reach to include a row a notification points at. */
+const THROUGH_MAX = 500;
+
+/**
+ * The newest `limit` transactions. With `throughId` (a row a notification points at), the list reaches back far
+ * enough to include that row, even when it is older than the first page; a row that isn't this user's (or no longer
+ * exists) changes nothing.
+ */
+export async function fetchTransactions(userId: string, limit = 30, throughId?: string | null): Promise<Transaction[]> {
   const { data, error } = await supabase
     .from('wallet_transactions')
     .select('id, kind, amount, balance_after, note, created_at')
@@ -36,7 +45,21 @@ export async function fetchTransactions(userId: string, limit = 30): Promise<Tra
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
-  return ((data ?? []) as TransactionRow[]).map((row) => ({
+  let rows = (data ?? []) as TransactionRow[];
+  if (throughId && !rows.some((row) => row.id === throughId)) {
+    const target = await supabase.from('wallet_transactions').select('created_at').eq('id', throughId).eq('user_id', userId).maybeSingle();
+    if (!target.error && target.data) {
+      const older = await supabase
+        .from('wallet_transactions')
+        .select('id, kind, amount, balance_after, note, created_at')
+        .eq('user_id', userId)
+        .gte('created_at', (target.data as { created_at: string }).created_at)
+        .order('created_at', { ascending: false })
+        .limit(THROUGH_MAX);
+      if (!older.error && older.data && older.data.length > rows.length) rows = older.data as TransactionRow[];
+    }
+  }
+  return rows.map((row) => ({
     id: row.id,
     kind: row.kind,
     amount: Number(row.amount),
@@ -108,6 +131,7 @@ export async function cancelDeposit(depositId: string): Promise<void> {
 export async function payOrderWithWallet(orderId: string): Promise<{ balance: number }> {
   const { data, error } = await supabase.rpc('pay_order_with_wallet', { p_order: orderId });
   if (error) throw error;
+  triggerFulfillment(orderId);
   return { balance: Number((data as { balance?: unknown } | null)?.balance ?? 0) };
 }
 

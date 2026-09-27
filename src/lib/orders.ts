@@ -38,6 +38,11 @@ export type Order = {
   /** Admin trail only: what ShegerPay verified, and whether the test key did it. */
   payment_verified_amount?: number | string | null;
   payment_mode?: string | null;
+  /** Gifts (Profile > Gift): the buyer's order behind a gift / redeem code, with its current state... */
+  gift_kind?: 'gift' | 'redeem_code' | null;
+  gift_state?: string | null;
+  /** ...or the recipient's delivery order for a gift they claimed. */
+  gift_id?: string | null;
 };
 
 export const ORDER_COLUMNS =
@@ -51,15 +56,24 @@ export function toOrder(row: OrderRow): Order {
 
 // Admins can read every order, so customer queries always filter by user id.
 
+// A gift order's gift (gifts.order_id) or redeem code: the state the Orders list shows. orders.gift_id is the OTHER
+// link (a recipient's delivery order), hence the named foreign key.
+const GIFT_COLUMNS = 'gift_kind, gift_id, gifts!gifts_order_id_fkey ( status ), redeem_codes ( status )';
+type GiftRow = { gifts?: { status: string } | null; redeem_codes?: { status: string } | null };
+
 export async function fetchMyOrders(userId: string): Promise<Order[]> {
   const { data, error } = await supabase
     .from('orders')
-    .select(ORDER_COLUMNS)
+    .select(`${ORDER_COLUMNS}, ${GIFT_COLUMNS}`)
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(100);
   if (error) throw error;
-  return ((data ?? []) as OrderRow[]).map(toOrder);
+  return ((data ?? []) as unknown as (OrderRow & GiftRow)[]).map(({ gifts, redeem_codes, ...row }) => ({
+    ...toOrder(row),
+    // A redeem-code order also backs the gift made when the code is redeemed: its own state is the CODE's.
+    gift_state: (row.gift_kind === 'redeem_code' ? redeem_codes?.status : gifts?.status) ?? null,
+  }));
 }
 
 export async function fetchOrder(userId: string, id: string): Promise<Order | null> {

@@ -177,12 +177,18 @@ const notesBefore = await cnt('admin_notifications');
   try { await db.query(`update deposit_requests set status='paid', paid_at=now(), payment_mode='live', payment_verified_amount=1 where id = $1`, [D2.deposit_id]); } catch (x) { e = x; }
   ok('and a hand-edit to "paid" with the wrong amount is refused by a CHECK', e && /deposit_paid_exact_check/.test(e.message), e?.message);
 }
+const notif = async (u, type) => (await db.query(`select * from notifications where user_id = $1 and type = $2 order by created_at`, [u, type])).rows;
+ok('no "deposit approved" notification before the deposit is verified', (await notif(A, 'deposit_approved')).length === 0);
 const paid = await finishDep(D2.deposit_id, 'paid', 500);
 ok('the exact amount: paid', paid.result === 'paid' && Number(paid.balance) === 1500, JSON.stringify(paid));
 ok('the balance went up by exactly the amount', (await bal(A)) === 1500);
 {
   const tx = await one(`select kind, amount::float a, balance_after::float ba, deposit_id, note from wallet_transactions where deposit_id = $1`, [D2.deposit_id]);
   ok('...with a ledger row: kind deposit, +500, balance_after 1500, linked to the request', tx && tx.kind === 'deposit' && tx.a === 500 && tx.ba === 1500 && tx.deposit_id === D2.deposit_id, JSON.stringify(tx));
+  const dn = await notif(A, 'deposit_approved');
+  ok('verifying the deposit sends ONE targeted "deposit approved" notification to that customer, with the amount', dn.length === 1 && Number(dn[0].data.amount) === 500 && dn[0].data.deposit_id === D2.deposit_id && dn[0].body === 'Br 500 added to your wallet', JSON.stringify(dn.map((n) => n.body)));
+  ok('...targeted, not broadcast: no other customer sees it', (await db.query(`select count(*)::int n from notifications where type = 'deposit_approved' and (user_id is null or user_id <> $1)`, [A])).rows[0].n === 0);
+  ok('...and names the exact ledger row (data.transaction_id), so tapping it can scroll to that transaction', dn[0].data.transaction_id === (await one(`select id from wallet_transactions where deposit_id = $1`, [D2.deposit_id])).id, JSON.stringify(dn[0].data));
   ok('...and the books balance', await ledgerOk());
 }
 {
@@ -365,15 +371,23 @@ await setBal(A, 1000);
 }
 
 console.log('\n# Withdrawal: admin approves (the money was sent by hand)');
+const depositNotifsBefore = (await notif(A, 'deposit_approved')).length;
 await setBal(A, 1000);
+ok('a manual admin credit (admin_adjust_balance) is NOT announced as a deposit', (await notif(A, 'deposit_approved')).length === depositNotifsBefore);
+ok('declined withdrawals (refunded to the wallet) are NOT announced as order refunds', (await notif(A, 'refund_credited')).length === 0);
+ok('...nor as sent', (await notif(A, 'withdrawal_sent')).length === 0);
 {
   const w = await wd(A, 250, 'cbe', '1000727257229');
+  ok('requesting a withdrawal sends nothing', (await notif(A, 'withdrawal_sent')).length === 0);
   const before = await bal(A);
   const txBefore = await cnt('wallet_transactions');
   await rejects('a customer cannot resolve (not even their own)', 'authenticated', A, `select * from admin_resolve_withdrawal('${w.withdrawal_id}', true, 'me')`, /forbidden/);
   await rejects('...and cannot flip the status directly', 'authenticated', A, `update withdrawal_requests set status = 'paid'`, /permission denied/);
   const r = await resolve(ADM, w.withdrawal_id, true, 'Sent via CBE, ref 123');
   ok('approve marks it paid with the note and who/when', r.status === 'paid' && r.admin_note === 'Sent via CBE, ref 123' && r.resolved_by === ADM && r.resolved_at);
+  const sent = await notif(A, 'withdrawal_sent');
+  ok('marking it paid sends ONE targeted "withdrawal sent" notification with the amount', sent.length === 1 && Number(sent[0].data.amount) === 250 && sent[0].data.withdrawal_id === w.withdrawal_id && sent[0].body === 'Br 250 sent to you', JSON.stringify(sent.map((n) => n.body)));
+  ok('...pointing at the ledger row that held the money when it was requested', sent[0].data.transaction_id === (await one(`select id from wallet_transactions where withdrawal_id = $1 and kind = 'withdrawal'`, [w.withdrawal_id])).id, JSON.stringify(sent[0].data));
   ok('approve moves NO money (it was already held)', (await bal(A)) === before && (await cnt('wallet_transactions')) === txBefore && (await ledgerOk()));
   const e = await err(ADM, `select * from admin_resolve_withdrawal($1,true,null)`, [w.withdrawal_id]);
   ok('resolving it again is refused', e && /already_resolved/.test(e.message) && e.detail === 'paid');

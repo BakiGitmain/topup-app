@@ -1,6 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { copyToClipboard } from '../../lib/clipboard';
 import type { PaymentAccount } from '../../lib/checkout';
 import { useT } from '../../lib/i18n';
 import { cleanReference, type ProviderId } from '../../lib/paymentView';
@@ -8,9 +7,8 @@ import { fetchTutorials } from '../../lib/paymentTutorials';
 import { forProvider } from '../../lib/tutorialEdit';
 import { useAsync } from '../../lib/useAsync';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
-import { useToast } from '../../lib/toast';
-import { FeatherIcon } from '../art/FeatherIcon';
 import { Button } from '../ui/Button';
+import { CopyButton } from '../ui/CopyButton';
 import { ErrorBanner } from '../ui/ErrorBanner';
 import { PasteButton } from '../ui/PasteButton';
 import { ProviderPicker } from './ProviderPicker';
@@ -37,15 +35,10 @@ type Props = {
  */
 export function PaymentInstructions({ accounts, accountsLoading, provider, onProvider, reference, onReference, busy, message, onSubmit }: Props) {
   const t = useT();
-  const toast = useToast();
   // The admin's "how to pay" pictures for the chosen method. None uploaded (or not loaded yet) = nothing is drawn.
   const tutorials = useAsync(fetchTutorials);
   const account = accounts?.find((a) => a.provider === provider) ?? null;
   const cleaned = cleanReference(reference);
-
-  async function copyNumber(number: string) {
-    if (await copyToClipboard(number)) toast(t('common.copied'));
-  }
 
   return (
     <>
@@ -64,15 +57,7 @@ export function PaymentInstructions({ accounts, accountsLoading, provider, onPro
               <Text style={styles.number} selectable accessibilityLabel={`${t('pay.accountNumber')} ${account.accountNumber}`}>
                 {account.accountNumber}
               </Text>
-              <Pressable
-                onPress={() => copyNumber(account.accountNumber)}
-                accessibilityRole="button"
-                accessibilityLabel={`${t('common.copy')} ${t('pay.accountNumber')}`}
-                style={({ pressed }) => [styles.copy, pressed && { opacity: 0.8 }]}
-              >
-                <FeatherIcon name="copy" size={16} color={colors.limeDark} strokeWidth={2.4} />
-                <Text style={styles.copyText}>{t('common.copy')}</Text>
-              </Pressable>
+              <CopyButton value={account.accountNumber} accessibilityLabel={`${t('common.copy')} ${t('pay.accountNumber')}`} variant="label" />
             </View>
             <Text style={styles.steps}>{t(provider === 'telebirr' ? 'pay.steps.telebirr' : 'pay.steps.cbe')}</Text>
           </>
@@ -110,8 +95,6 @@ const styles = StyleSheet.create({
   accountName: { marginTop: 2, fontFamily: fonts.bold, fontSize: 17, color: colors.text },
   numberRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, marginTop: 2 },
   number: { flex: 1, fontFamily: fonts.extrabold, fontSize: 21, color: colors.text, letterSpacing: 0.5 },
-  copy: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44, paddingHorizontal: spacing.md, borderRadius: 22, backgroundColor: colors.limeSoft },
-  copyText: { fontFamily: fonts.bold, fontSize: 13.5, color: colors.limeDark },
   steps: { marginTop: spacing.sm, fontFamily: fonts.regular, fontSize: 13.5, lineHeight: 20, color: colors.textMuted },
   noAccount: { fontFamily: fonts.medium, fontSize: 14, lineHeight: 20, color: colors.danger },
   hint: { marginTop: -spacing.sm, marginBottom: spacing.md, fontFamily: fonts.regular, fontSize: 12.5, lineHeight: 18, color: colors.textMuted },

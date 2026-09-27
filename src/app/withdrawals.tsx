@@ -1,19 +1,19 @@
 import { Redirect } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FeatherIcon } from '../components/art/FeatherIcon';
 import { StateMessage } from '../components/market/StateMessage';
 import { Button } from '../components/ui/Button';
 import { Chips, type ChipOption } from '../components/ui/Chips';
+import { CopyButton } from '../components/ui/CopyButton';
 import { ErrorBanner } from '../components/ui/ErrorBanner';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { Column } from '../components/ui/TabScroll';
 import { TextField } from '../components/ui/TextField';
 import { useAuth } from '../lib/auth';
 import { formatBirr } from '../lib/catalog';
-import { copyToClipboard } from '../lib/clipboard';
 import { confirmDestructive } from '../lib/confirm';
 import { formatDateTime } from '../lib/format';
 import { colors, fonts, radius, spacing } from '../lib/theme';
@@ -179,16 +179,7 @@ function PendingCard({ w, onChanged }: { w: Withdrawal; onChanged: () => void })
           <Text style={styles.sendValue} selectable>
             {providerName(w.provider)}  {w.account}
           </Text>
-          <Pressable
-            onPress={async () => {
-              if (await copyToClipboard(w.account)) toast('Copied');
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={`Copy ${w.account}`}
-            style={({ pressed }) => [styles.copy, pressed && { opacity: 0.7 }]}
-          >
-            <FeatherIcon name="copy" size={16} color={colors.limeDark} strokeWidth={2.4} />
-          </Pressable>
+          <CopyButton value={w.account} accessibilityLabel={`Copy ${w.account}`} />
         </View>
       </View>
       <Text style={styles.time}>Requested {formatDateTime(w.createdAt)}. The amount is already held.</Text>
@@ -249,7 +240,6 @@ const styles = StyleSheet.create({
   sendLabel: { fontFamily: fonts.bold, fontSize: 11, letterSpacing: 0.8, color: colors.limeInk },
   sendRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, marginTop: 2 },
   sendValue: { flex: 1, fontFamily: fonts.extrabold, fontSize: 17, color: colors.text },
-  copy: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.limeSoft },
   time: { fontFamily: fonts.regular, fontSize: 12.5, color: colors.textMuted },
   reasonBox: { marginTop: spacing.xs },
   buttons: { flexDirection: 'row', gap: spacing.sm },

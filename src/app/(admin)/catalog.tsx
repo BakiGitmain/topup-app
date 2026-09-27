@@ -128,7 +128,7 @@ export default function CatalogScreen() {
               </Text>
               <Text style={styles.unsavedBody}>Nothing changes for customers until you save.</Text>
             </View>
-            <Button label="Save" onPress={save} loading={saving} style={styles.saveButton} />
+            <Button label="Save" icon="check" onPress={save} loading={saving} style={styles.saveButton} />
           </View>
         )}
 

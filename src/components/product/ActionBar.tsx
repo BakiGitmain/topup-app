@@ -14,6 +14,8 @@ type Props = {
   buying: boolean;
   onAdd: () => void;
   onBuy: () => void;
+  /** Gift mode (Profile > Gift): no add-to-cart, and the primary button says what is being bought. */
+  giftLabel?: string;
 };
 
 /**
@@ -21,7 +23,7 @@ type Props = {
  * people can keep browsing) and the primary "Buy now" (add to cart if it isn't there, then straight to checkout). Both are
  * switched off together by the same blocker: the ID for this item must be checked first.
  */
-export function ActionBar({ total, blockerText, adding, buying, onAdd, onBuy }: Props) {
+export function ActionBar({ total, blockerText, adding, buying, onAdd, onBuy, giftLabel }: Props) {
   const t = useT();
   const blocked = blockerText !== null;
 
@@ -40,6 +42,7 @@ export function ActionBar({ total, blockerText, adding, buying, onAdd, onBuy }: 
           </Text>
         </View>
 
+        {!giftLabel && (
         <Pressable
           onPress={onAdd}
           disabled={blocked || adding || buying}
@@ -59,8 +62,9 @@ export function ActionBar({ total, blockerText, adding, buying, onAdd, onBuy }: 
             </View>
           )}
         </Pressable>
+        )}
 
-        <Button label={t('product.buyNow')} onPress={onBuy} loading={buying} disabled={blocked || adding} style={styles.buy} />
+        <Button label={giftLabel ?? t('product.buyNow')} onPress={onBuy} loading={buying} disabled={blocked || adding} style={styles.buy} />
       </View>
     </>
   );

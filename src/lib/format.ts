@@ -2,6 +2,15 @@ import { formatBirr } from './catalog';
 
 export { formatBirr };
 
+/** "Br 1,250.00" -- two decimals, so a balance reads as money in the header wallet pill and menu. The one exception
+ * is exactly zero, "Br 0": a new wallet's most common value, and the pill is short on room with the bell beside it.
+ * (Prices use formatBirr, which drops decimals for every whole number.) */
+export function formatBirrExact(amount: number | null): string {
+  if (amount === null) return 'Br —';
+  if (amount === 0) return 'Br 0';
+  return `Br ${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** "Sep 21, 3:45 PM". Deliberately locale-independent so it looks the same everywhere. */
@@ -10,6 +19,12 @@ export function formatDateTime(iso: string) {
   const h = d.getHours();
   const m = String(d.getMinutes()).padStart(2, '0');
   return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${h % 12 || 12}:${m} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+/** "Sep 21, 2026". Date only, no time -- for things like an expiry date where the time of day isn't meaningful. */
+export function formatDate(iso: string) {
+  const d = new Date(iso);
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
 export type Elapsed = { unit: 'now' | 'min' | 'hour' | 'day'; n: number };
