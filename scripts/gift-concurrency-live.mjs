@@ -10,6 +10,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import { rowsFromCliOutput } from './cliQueryRows.mjs';
 import { fileURLToPath } from 'node:url';
 
 const URL_ = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -27,12 +29,15 @@ function sql(fileOrQuery, isFile) {
   }
   try {
     for (let attempt = 1; ; attempt++) {
+      let out;
       try {
-        const out = execFileSync('npx', ['supabase', 'db', 'query', '--linked', '-o', 'json', '-f', `"${file}"`], { encoding: 'utf8', shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
-        return JSON.parse(out.slice(out.indexOf('{'))).rows;
+        out = execFileSync('npx', ['supabase', 'db', 'query', '--linked', '-o', 'json', '-f', `"${file}"`], { encoding: 'utf8', shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
       } catch (e) {
         if (attempt >= 3) throw new Error(String(e.stderr || e.message).slice(0, 600));
+        continue;
       }
+      // Only the CLI call is retried: once it ran, the SQL ran, and re-running it would repeat its writes.
+      return rowsFromCliOutput(out);
     }
   } finally {
     if (!isFile) fs.rmSync(file, { force: true });
