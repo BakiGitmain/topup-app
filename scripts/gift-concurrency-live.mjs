@@ -79,6 +79,10 @@ const CLEANUP = `
   select (select count(*) from auth.users where email like 'giftrace-%') as users_left,
          (select count(*) from public.admin_notifications where message like '%giftrace-%') as outbox_left`;
 
+// An earlier run that was interrupted (Ctrl+C, a crash) never reached its own cleanup; its leftovers would be
+// reused by this run's setup and skew its counts. Start clean.
+sql(CLEANUP, false);
+
 try {
   console.log('setting up (real deposit + 7 real wallet checkouts)...');
   const [setup] = sql(fileURLToPath(new URL('./gift-concurrency-live.sql', import.meta.url)), true);

@@ -74,6 +74,10 @@ const CLEANUP = `
   delete from auth.users where email like 'gdel-%@topup-test.invalid';
   select (select count(*) from auth.users where email like 'gdel-%') as users_left`;
 
+// An earlier run that was interrupted (Ctrl+C, a crash) never reached its own cleanup; its leftovers would be
+// reused by this run's setup and skew its counts. Start clean.
+sql(CLEANUP);
+
 try {
   // ---- setup: four throwaway accounts, the buyer funded through the real (test-key) deposit path
   sql(`${mkUser('buyer')} ${mkUser('friend')} ${mkUser('other')} ${mkUser('admin')}

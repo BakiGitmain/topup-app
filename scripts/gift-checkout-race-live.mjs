@@ -132,6 +132,10 @@ const CLEANUP = `
   delete from auth.users where email like 'giftpay-%@topup-test.invalid';
   select (select count(*) from auth.users where email like 'giftpay-%') as users_left`;
 
+// An earlier run that was interrupted (Ctrl+C, a crash) never reached its own cleanup; its leftovers would be
+// reused by this run's setup and skew its counts. Start clean.
+sql(CLEANUP);
+
 try {
   sql(`${user('buyer')} ${user('friend')} select 1 as ok`);
   const buyer = await signIn('giftpay-buyer@topup-test.invalid');
