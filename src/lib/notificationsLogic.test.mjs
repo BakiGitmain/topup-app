@@ -224,6 +224,7 @@ describe('gift notifications (20261021090000): recipient -> Vault, buyer -> thei
   });
   it('the receipt is the buyer\'s: a gift received is its own side', () => {
     assert.equal(giftSideOf({ gift_id: G }), 'delivery');
+    assert.equal(giftSideOf({ gift_id: null, is_gift_delivery: true }), 'delivery', 'still a gift after its gift row is gone');
     assert.equal(giftSideOf({ gift_kind: 'gift' }), 'purchase');
     assert.equal(giftSideOf({ gift_kind: 'redeem_code' }), 'purchase');
     assert.equal(giftSideOf({}), null);

@@ -75,8 +75,9 @@ export function receiptAvailable(status: string): boolean {
  * recipient's delivery order (orders.gift_id): shown as a gift, never as a receipt, never with a price (it carries
  * none, 20261021090000). 'purchase' = the buyer's order behind a gift or code: a normal receipt. null = not a gift.
  */
-export function giftSideOf(order: { gift_id?: string | null; gift_kind?: string | null }): 'delivery' | 'purchase' | null {
-  if (order.gift_id) return 'delivery';
+export function giftSideOf(order: { gift_id?: string | null; gift_kind?: string | null; is_gift_delivery?: boolean }): 'delivery' | 'purchase' | null {
+  // The permanent marker first (gift_id is cleared if the gift row is ever deleted; the marker is not).
+  if (order.is_gift_delivery || order.gift_id) return 'delivery';
   if (order.gift_kind) return 'purchase';
   return null;
 }

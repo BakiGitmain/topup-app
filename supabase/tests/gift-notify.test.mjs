@@ -97,5 +97,20 @@ console.log('\n-- each notification reaches only its own person');
 ok('the stranger sees none of the friend\'s or buyer\'s', (await inbox(STRANGER)).every((n) => !['gift_received', 'gift_claimed', 'code_redeemed', 'gift_delivered'].includes(n.type)));
 ok('the friend sees none of the buyer\'s', (await inbox(FRIEND)).every((n) => !['gift_claimed', 'code_redeemed'].includes(n.type)));
 
+console.log('\n-- the delivery order stays a gift delivery even if its gift row is deleted (found live: cleanup failed)');
+await as('authenticated', ADM, `select admin_adjust_balance($1, 1000, 'more funds')`, [BUYER]);
+const g3 = await buy('gift', FRIEND);
+await rows('authenticated', FRIEND, `select * from claim_gift($1, '{}'::jsonb)`, [g3.gift_id]);
+const d3 = await one(`select id from orders where gift_id = $1`, [g3.gift_id]);
+ok('the delivery order is marked, from the moment it was made', (await one(`select is_gift_delivery m from orders where id = $1`, [d3.id])).m === true);
+let deleted = true;
+try { await db.exec(`delete from gifts where id = '${g3.gift_id}'`); } catch (e) { deleted = false; console.log('   ', e.message); }
+const orphan = await one(`select gift_id, amount, is_gift_delivery from orders where id = $1`, [d3.id]);
+ok('deleting the gift works (its link is cleared), and the Br 0 delivery order survives, still marked', deleted && orphan.gift_id === null && Number(orphan.amount) === 0 && orphan.is_gift_delivery === true, JSON.stringify(orphan));
+await rejects('...and still cannot be failed into a refund', 'authenticated', ADM, `select admin_set_order_status($1, 'failed')`, /gift_delivery_locked/, [d3.id]);
+await rejects('the marker cannot be switched on for an ordinary order (no Br 0 sale can be faked)', 'postgres', null, `update orders set is_gift_delivery = true where id = '${unpaid.order_id}'`, /gift_delivery_locked/);
+await rejects('...nor off for a delivery', 'postgres', null, `update orders set is_gift_delivery = false where id = '${d3.id}'`, /gift_delivery_locked/);
+await rejects('an ordinary Br 0 order is still refused', 'postgres', null, `insert into orders (user_id, option_id, product_name, option_label, amount, status, is_gift_delivery) values ('${BUYER}', '${O}', 'x', 'y', 0, 'pending', true)`, /orders_amount_check/);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

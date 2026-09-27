@@ -13,7 +13,7 @@ import { Column, TabScroll } from '../../components/ui/TabScroll';
 import { fetchQueue, searchOrders, type QueueFilter, type QueueOrder } from '../../lib/admin';
 import { formatBirr } from '../../lib/catalog';
 import { shortWait } from '../../lib/format';
-import { classifyOrderQuery } from '../../lib/orderView';
+import { classifyOrderQuery, giftSideOf } from '../../lib/orderView';
 import { usePending } from '../../lib/pending';
 import { SEARCH_IDLE_MS } from '../../lib/searchLogic';
 import { useDebouncedSearch } from '../../lib/useDebounced';
@@ -171,7 +171,7 @@ function QueueRow({
         <StatusBadge status={order.status} label={STATUS_LABELS_EN[order.status]} />
         <View style={styles.tags}>
           {order.fulfillment === 'code' && <Text style={styles.tag}>CODE</Text>}
-          {order.gift_id ? <Text style={styles.tag}>GIFT</Text> : <Text style={styles.amount}>{formatBirr(order.amount)}</Text>}
+          {giftSideOf(order) === 'delivery' ? <Text style={styles.tag}>GIFT</Text> : <Text style={styles.amount}>{formatBirr(order.amount)}</Text>}
         </View>
       </View>
     </Pressable>

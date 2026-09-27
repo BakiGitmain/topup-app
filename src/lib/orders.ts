@@ -43,10 +43,12 @@ export type Order = {
   gift_state?: string | null;
   /** ...or the recipient's delivery order for a gift they claimed. */
   gift_id?: string | null;
+  /** Permanent: this is a recipient's gift delivery, even if its gift row was later deleted (gift_id cleared). */
+  is_gift_delivery?: boolean;
 };
 
 export const ORDER_COLUMNS =
-  'id, product_name, option_label, amount, status, fulfillment, delivery, region_label, validation_id, validated_account_region, validated_player_name, id_self_declared_at, created_at, completed_at, payment_provider, payment_reference, paid_at, payment_verified_amount, payment_mode, gift_kind, gift_id';
+  'id, product_name, option_label, amount, status, fulfillment, delivery, region_label, validation_id, validated_account_region, validated_player_name, id_self_declared_at, created_at, completed_at, payment_provider, payment_reference, paid_at, payment_verified_amount, payment_mode, gift_kind, gift_id, is_gift_delivery';
 
 export type OrderRow = Omit<Order, 'amount'> & { amount: number | string };
 

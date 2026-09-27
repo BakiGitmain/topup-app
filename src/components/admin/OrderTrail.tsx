@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { fetchPaymentAttempts, type QueueOrder } from '../../lib/admin';
 import { formatBirr } from '../../lib/catalog';
 import { formatDateTime } from '../../lib/format';
-import { attemptText, fulfilmentOf, paymentMethodOf, shortOrderId } from '../../lib/orderView';
+import { attemptText, fulfilmentOf, giftSideOf, paymentMethodOf, shortOrderId } from '../../lib/orderView';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
 import { useAsync } from '../../lib/useAsync';
 import { FeatherIcon } from '../art/FeatherIcon';
@@ -35,8 +35,8 @@ export function OrderTrail({ order }: { order: QueueOrder }) {
       <View style={styles.card}>
         <Text style={styles.title}>Payment</Text>
         {/* A gift delivery was paid on the BUYER's order; this one carries no price (20261021090000). */}
-        <Line label="Method" value={order.gift_id ? 'Gift (paid on the buyer\'s order)' : method ? (METHOD[method] ?? method) : 'Not paid yet'} />
-        <Line label="Order total" value={order.gift_id ? '-' : formatBirr(order.amount)} />
+        <Line label="Method" value={giftSideOf(order) === 'delivery' ? 'Gift (paid on the buyer\'s order)' : method ? (METHOD[method] ?? method) : 'Not paid yet'} />
+        <Line label="Order total" value={giftSideOf(order) === 'delivery' ? '-' : formatBirr(order.amount)} />
         {order.payment_verified_amount !== null && order.payment_verified_amount !== undefined ? (
           <Line label="Verified amount" value={formatBirr(Number(order.payment_verified_amount))} />
         ) : null}

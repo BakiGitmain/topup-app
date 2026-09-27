@@ -8,7 +8,7 @@ import fs from 'node:fs';
 const read = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const FILES = fs.readdirSync(new URL('../migrations/', import.meta.url)).filter((f) => f.endsWith('.sql')).sort();
 const MIGRATIONS = FILES.map((f) => read(`migrations/${f}`));
-const GIFT_FILES = FILES.filter((f) => /_(gifts_and_redeem_codes|gift_checkout|gift_delivery|gift_hardening|gift_server_choice|gift_notifications_and_receipts)\.sql$/.test(f));
+const GIFT_FILES = FILES.filter((f) => /_(gifts_and_redeem_codes|gift_checkout|gift_delivery|gift_hardening|gift_server_choice|gift_notifications_and_receipts|gift_delivery_marker)\.sql$/.test(f));
 
 const db = new PGlite();
 await db.exec(`
@@ -46,7 +46,7 @@ const CUSTOMER = new Set(['checkout_gift', 'claim_gift', 'find_recipient_by_emai
 const SERVER = new Set(['expire_gifts_and_codes']);
 // Admin actions redefined by a gift migration: callable when signed in, and refuse anyone but an admin inside.
 const ADMIN_GATED = new Set(['admin_set_order_status']);
-ok(`found the gift functions by reading ${GIFT_FILES.length} migrations`, GIFT_FILES.length === 6 && GIFT_FUNCTIONS.length >= 20 && [...CUSTOMER, ...SERVER].every((f) => GIFT_FUNCTIONS.includes(f)), GIFT_FUNCTIONS.join(' '));
+ok(`found the gift functions by reading ${GIFT_FILES.length} migrations`, GIFT_FILES.length === 7 && GIFT_FUNCTIONS.length >= 20 && [...CUSTOMER, ...SERVER].every((f) => GIFT_FUNCTIONS.includes(f)), GIFT_FUNCTIONS.join(' '));
 const privs = (await db.query(`
   select p.proname, pg_get_function_identity_arguments(p.oid) args,
          has_function_privilege('anon', p.oid, 'execute') anon,
