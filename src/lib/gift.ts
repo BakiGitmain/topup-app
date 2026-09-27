@@ -1,4 +1,5 @@
 import { triggerFulfillment } from './fulfillment';
+import { readRedeemReply, type RedeemReply } from './redeemInput';
 import { supabase } from './supabase';
 
 /** What is being bought: a gift for one account, or a redeem code anyone can use. */
@@ -111,4 +112,18 @@ export async function fetchGiftSummary(orderId: string): Promise<GiftSummary | n
     recipientName: typeof d.recipient_name === 'string' ? d.recipient_name : null,
     recipientAvatar: typeof d.recipient_avatar === 'string' ? d.recipient_avatar : null,
   };
+}
+
+/**
+ * Redeems a code for the signed-in user (redeem_code: single winner, rate-limited, never raises). The code is passed
+ * as typed; the server normalizes it again. A failed request is 'error' -- never assumed redeemed.
+ */
+export async function redeemCode(code: string): Promise<RedeemReply> {
+  try {
+    const { data, error } = await supabase.rpc('redeem_code', { p_code: code });
+    if (error) return { kind: 'error' };
+    return readRedeemReply(data);
+  } catch {
+    return { kind: 'error' };
+  }
 }

@@ -186,6 +186,8 @@ export default function ProfileScreen() {
           <SettingsGroup>
             {/* Gift: send a pack to a friend or buy a redeem code (the gift flow, see app/gift). */}
             <SettingsRow icon="gift" label={t('gift.menu.title')} onPress={() => router.push('/gift')} />
+            {/* Redeem code: a code someone handed over becomes a gift in this Vault (app/redeem). */}
+            <SettingsRow icon="key" label={t('redeem.title')} onPress={() => router.push('/redeem')} />
             <SettingsMenu title={t('settings.title')} items={settingsItems} />
             <SettingsRow
               icon="globe"

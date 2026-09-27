@@ -66,9 +66,11 @@ const N = 3000;
 const codes = (await db.query(`select generate_redeem_code() c from generate_series(1, ${N})`)).rows.map((r) => r.c);
 ok('every code is exactly 10 characters from A-Z0-9', codes.every((c) => /^[A-Z0-9]{10}$/.test(c)), codes.find((c) => !/^[A-Z0-9]{10}$/.test(c)));
 ok(`${N} codes, all different`, new Set(codes).size === N);
+// Part 4 (20261019090000_gift_hardening) replaced the alphabet with 32 characters (no 0/O/1/I); its character set
+// and distribution are checked in gift-security.test.mjs.
 const freq = {}; for (const c of codes) for (const ch of c) freq[ch] = (freq[ch] ?? 0) + 1;
-const expected = (N * 10) / 36;
-ok('all 36 characters appear, each within 25% of an even share (no modulo bias)', Object.keys(freq).length === 36 && Object.values(freq).every((n) => Math.abs(n - expected) / expected < 0.25), JSON.stringify(freq));
+const expected = (N * 10) / Object.keys(freq).length;
+ok('every character of the alphabet appears, each within 25% of an even share (no bias)', Object.keys(freq).length === 32 && Object.values(freq).every((n) => Math.abs(n - expected) / expected < 0.25), JSON.stringify(freq));
 ok('drawn from the cryptographic source (gen_random_uuid -> pg_strong_random), never random()', /uuid_send\(gen_random_uuid\(\)\)/.test(GIFT_SQL) && !/\brandom\(\)/.test(GIFT_SQL.split('create or replace function public.generate_redeem_code')[1].split('$$;')[0]));
 await rejects('customers cannot call the generator', 'authenticated', BUYER, `select generate_redeem_code()`, /permission denied/);
 

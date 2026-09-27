@@ -26,6 +26,7 @@ import { cartErrorText, useCart } from '../../lib/cart';
 import { sameFields } from '../../lib/cartApi';
 import { needsAccountId } from '../../lib/catalog';
 import { tileLetter } from '../../lib/catalogRules';
+import { confirmDestructive } from '../../lib/confirm';
 import { useT } from '../../lib/i18n';
 import {
   continueBlocker,
@@ -53,8 +54,9 @@ import { useAsync } from '../../lib/useAsync';
 import { useIdValidation } from '../../lib/useIdValidation';
 import { useScrollContainer, useScrollToHighlight } from '../../lib/useScrollToHighlight';
 import { checkoutGift, giftCheckoutError } from '../../lib/gift';
-import { readGiftParams, type GiftRouteParams } from '../../lib/giftMode';
+import { giftTerms, readGiftParams, type GiftRouteParams } from '../../lib/giftMode';
 import { GiftBanner } from '../../components/gift/GiftBanner';
+import { GiftTerms } from '../../components/gift/GiftTerms';
 
 const BLOCKER_TEXT: Record<Blocker, Parameters<ReturnType<typeof useT>>[0]> = {
   choose_package: 'product.blocker.choose',
@@ -294,6 +296,16 @@ export default function ProductScreen() {
   /** Gift mode's one button: buy this pack as the gift / redeem code, then the done screen (or the bank screen). */
   async function onGift() {
     if (!gift || !selected || blocker !== null || buying) return;
+    // Gifts can't be refunded (owner's decision), so the charge is confirmed first, naming the pack, who and the price.
+    const confirmed = await confirmDestructive(
+      t(gift.kind === 'gift' ? 'gift.confirm.titleGift' : 'gift.confirm.titleCode'),
+      gift.kind === 'gift'
+        ? t('gift.confirm.bodyGift', { pack: `${product?.name ?? ''} ${selected.label}`.trim(), name: gift.toName, price: formatBirr(selected.price) })
+        : t('gift.confirm.bodyCode', { pack: `${product?.name ?? ''} ${selected.label}`.trim(), price: formatBirr(selected.price) }),
+      t('gift.confirm.buy'),
+      'primary'
+    );
+    if (!confirmed) return;
     setNotice(null);
     setBuying(true);
     try {
@@ -442,6 +454,8 @@ export default function ProductScreen() {
                     />
                   </View>
                 </View>
+
+                {gift && <GiftTerms terms={giftTerms(gift.kind, selected)} />}
 
               </>
             )}
