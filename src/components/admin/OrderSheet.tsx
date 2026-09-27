@@ -10,7 +10,7 @@ import {
 } from '../../lib/admin';
 import { formatBirr } from '../../lib/catalog';
 import { formatDateTime, shortWait } from '../../lib/format';
-import { verificationOf } from '../../lib/orderView';
+import { giftSideOf, verificationOf } from '../../lib/orderView';
 import { describeFields } from '../../lib/productView';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
 import { useToast } from '../../lib/toast';
@@ -66,7 +66,10 @@ function SheetBody({
   const needsCode = order.fulfillment === 'code';
   const fields = describeFields(order.delivery);
   const verification = verificationOf(order);
-  const canRefundCompleted = order.status === 'completed' && order.fulfillment === 'topup';
+  // A gift delivery is not a sale (Br 0, 20261021090000): it can only be delivered. Failing or refunding it would pay
+  // the gift's value into the recipient's wallet, which the database refuses (gift_delivery_locked) -- so no buttons.
+  const giftDelivery = giftSideOf(order) === 'delivery';
+  const canRefundCompleted = !giftDelivery && order.status === 'completed' && order.fulfillment === 'topup';
 
   async function run(action: () => Promise<void>, doneMessage: string) {
     setError(null);
@@ -93,7 +96,7 @@ function SheetBody({
     <View>
       <View style={styles.statusRow}>
         <StatusBadge status={order.status} label={STATUS_LABELS_EN[order.status]} />
-        <Text style={styles.amount}>{formatBirr(order.amount)}</Text>
+        <Text style={styles.amount}>{giftDelivery ? 'Gift' : formatBirr(order.amount)}</Text>
       </View>
 
       <Text style={styles.line}>{order.option_label}</Text>
@@ -190,7 +193,9 @@ function SheetBody({
             disabled={busy || (needsCode && code.trim().length === 0)}
             onPress={() => run(() => deliverOrder(order.id, needsCode ? code : null), 'Marked delivered')}
           />
-          {confirm === 'failed' ? (
+          {giftDelivery ? (
+            <Text style={styles.meta}>{"A gift the customer claimed: deliver it. It can't be failed or refunded (the buyer paid; no refunds on gifts)."}</Text>
+          ) : confirm === 'failed' ? (
             <ConfirmPanel
               text={`Mark this order failed and return ${formatBirr(order.amount)} to the customer?`}
               yes="Yes, refund"

@@ -48,7 +48,8 @@ type Props = {
  * so nothing is marked.
  *
  * Tapping a row closes the panel and opens what it is about (notificationTarget): an "on sale" pack on its product
- * page, a money notification's row in the profile's Transactions list. The destination scrolls to it and glows it
+ * page, a money notification's row in the profile's Transactions list, a gift in the Vault (the recipient's side),
+ * or the buyer's receipt for a gift / redeem code (the buyer's side). The destination scrolls to it and glows it
  * once (useScrollToHighlight). A row with nothing to open -- an old-format one -- only closes the panel.
  *
  * How a row LOOKS follows notificationAction: a row with somewhere real to go gets a trailing chevron, a pressed
@@ -87,6 +88,10 @@ export function NotificationPanel({ visible, onClose, openedAt }: Props) {
       router.push({ pathname: '/product/[id]', params: { id: target.productId, highlight: target.optionId, hl } });
     } else if (target?.kind === 'transaction') {
       router.navigate({ pathname: '/profile', params: { highlight: target.transactionId, hl } });
+    } else if (target?.kind === 'vault') {
+      router.navigate({ pathname: '/vault', params: { filter: target.filter, hl } });
+    } else if (target?.kind === 'order') {
+      router.push({ pathname: '/order/[id]', params: { id: target.orderId } });
     }
   }
 

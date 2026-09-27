@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { formatBirr } from '../../lib/catalog';
+import { giftSideOf } from '../../lib/orderView';
 import type { Order, OrderStatus } from '../../lib/orders';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
 import { FeatherIcon } from '../art/FeatherIcon';
@@ -44,7 +45,12 @@ export function OrderRow({ order, statusLabel, badgeStatus, meta, onPress }: Pro
       </View>
 
       <View style={styles.right}>
-        <Text style={styles.amount}>{formatBirr(order.amount)}</Text>
+        {/* A gift received has no price (it wasn't bought by this customer): the gift mark instead of "Br 0". */}
+        {giftSideOf(order) === 'delivery' ? (
+          <FeatherIcon name="gift" size={16} color={colors.limeDark} />
+        ) : (
+          <Text style={styles.amount}>{formatBirr(order.amount)}</Text>
+        )}
         <StatusBadge status={badgeStatus ?? order.status} label={statusLabel} />
       </View>
     </Pressable>

@@ -55,7 +55,15 @@ export type NotifTextKey =
   | 'notif.commission.body'
   | 'notif.commissionNoCode.body'
   | 'notif.withdrawal.title'
-  | 'notif.withdrawal.body';
+  | 'notif.withdrawal.body'
+  | 'notif.giftReceived.title'
+  | 'notif.giftReceived.body'
+  | 'notif.giftClaimed.title'
+  | 'notif.giftClaimed.body'
+  | 'notif.codeRedeemed.title'
+  | 'notif.codeRedeemed.body'
+  | 'notif.giftDelivered.title'
+  | 'notif.giftDelivered.body';
 
 /** "Br 1,250" for a whole amount, "Br 30.50" otherwise. Local copy of the birr style so this file stays import-free. */
 export function notifBirr(value: unknown): string | null {
@@ -107,6 +115,31 @@ export function notificationText(
     case 'withdrawal_sent':
       if (amount) return { title: t('notif.withdrawal.title'), body: t('notif.withdrawal.body', { amount }) };
       break;
+    // Gifts (20261021090000). A code's redeemer is never named: code_redeemed carries no person at all.
+    case 'gift_received': {
+      const product = str(d.product_name);
+      const pack = str(d.pack_label);
+      if (product && pack) return { title: t('notif.giftReceived.title'), body: t('notif.giftReceived.body', { name: str(d.sender_name) ?? '…', product, pack }) };
+      break;
+    }
+    case 'gift_claimed': {
+      const product = str(d.product_name);
+      const pack = str(d.pack_label);
+      if (product && pack) return { title: t('notif.giftClaimed.title'), body: t('notif.giftClaimed.body', { name: str(d.recipient_name) ?? '…', product, pack }) };
+      break;
+    }
+    case 'code_redeemed': {
+      const product = str(d.product_name);
+      const pack = str(d.pack_label);
+      if (product && pack) return { title: t('notif.codeRedeemed.title'), body: t('notif.codeRedeemed.body', { product, pack }) };
+      break;
+    }
+    case 'gift_delivered': {
+      const product = str(d.product_name);
+      const pack = str(d.pack_label);
+      if (product && pack) return { title: t('notif.giftDelivered.title'), body: t('notif.giftDelivered.body', { product, pack }) };
+      break;
+    }
   }
   return { title: n.title, body: n.body };
 }
@@ -116,7 +149,11 @@ export function notificationText(
 /** What a tapped notification points at: a pack on its product page, or a row in the Transactions list. */
 export type NotificationTarget =
   | { kind: 'pack'; productId: string; optionId: string }
-  | { kind: 'transaction'; transactionId: string };
+  | { kind: 'transaction'; transactionId: string }
+  /** The Vault on one of its filters (a gift received; a delivered gift's code). */
+  | { kind: 'vault'; filter: 'gifts' | 'cards' }
+  /** The buyer's own order: their receipt for the gift / redeem code. */
+  | { kind: 'order'; orderId: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const uuidOf = (value: unknown) => (typeof value === 'string' && UUID.test(value) ? value : null);
@@ -139,6 +176,14 @@ export function notificationTarget(n: Pick<AppNotification, 'type' | 'data'>): N
     const transactionId = uuidOf(d.transaction_id);
     return transactionId ? { kind: 'transaction', transactionId } : null;
   }
+  // The recipient's side goes to the Vault (never to a receipt: the receipt is the buyer's).
+  if (n.type === 'gift_received') return { kind: 'vault', filter: 'gifts' };
+  if (n.type === 'gift_delivered') return { kind: 'vault', filter: d.fulfillment === 'code' ? 'cards' : 'gifts' };
+  // The buyer's side goes to their order: the receipt.
+  if (n.type === 'gift_claimed' || n.type === 'code_redeemed') {
+    const orderId = uuidOf(d.order_id);
+    return orderId ? { kind: 'order', orderId } : null;
+  }
   return null;
 }
 
@@ -157,7 +202,9 @@ export type NotifOpensKey =
   | 'notif.opens.deposit'
   | 'notif.opens.refund'
   | 'notif.opens.commission'
-  | 'notif.opens.withdrawal';
+  | 'notif.opens.withdrawal'
+  | 'notif.opens.vault'
+  | 'notif.opens.receipt';
 
 export type NotificationAction = { target: NotificationTarget; opens: NotifOpensKey; vars: Record<string, string> };
 
@@ -168,8 +215,9 @@ const OPENS_BY_TYPE: Record<string, NotifOpensKey> = {
   withdrawal_sent: 'notif.opens.withdrawal',
 };
 
-/** The id a target is checked by: the pack, or the transaction. */
-export const targetKey = (target: NotificationTarget) => (target.kind === 'pack' ? target.optionId : target.transactionId);
+/** The id a target is checked by: the pack, or the transaction. Vault and order targets are never checked (always live). */
+export const targetKey = (target: NotificationTarget) =>
+  target.kind === 'pack' ? target.optionId : target.kind === 'transaction' ? target.transactionId : target.kind === 'order' ? target.orderId : `vault:${target.filter}`;
 
 /**
  * THE decision for how a row looks: a row with somewhere real to go gets the chevron, the pressed tint and a label
@@ -190,6 +238,8 @@ export function notificationAction(
     const onSale = !(status?.live && status.onSale === false);
     return { target, opens: onSale ? 'notif.opens.discountPack' : 'notif.opens.product', vars: { product } };
   }
+  if (target.kind === 'vault') return { target, opens: 'notif.opens.vault', vars: {} };
+  if (target.kind === 'order') return { target, opens: 'notif.opens.receipt', vars: {} };
   return { target, opens: OPENS_BY_TYPE[n.type], vars: {} };
 }
 
@@ -212,7 +262,7 @@ export function targetIdsOf(items: readonly Pick<AppNotification, 'type' | 'data
  * row in the Transactions list, so a notification and the row it opens look alike. Anything else: the legacy
  * promo-code broadcast gets a gift, an unknown type a plain bell.
  */
-export type NotifIcon = 'percent' | 'arrow-down-left' | 'rotate-ccw' | 'tag' | 'arrow-up-right' | 'gift' | 'bell';
+export type NotifIcon = 'percent' | 'arrow-down-left' | 'rotate-ccw' | 'tag' | 'arrow-up-right' | 'gift' | 'key' | 'check-circle' | 'bell';
 
 const ICON_BY_TYPE: Record<string, NotifIcon> = {
   product_discount: 'percent',
@@ -221,6 +271,10 @@ const ICON_BY_TYPE: Record<string, NotifIcon> = {
   commission_credited: 'tag',
   withdrawal_sent: 'arrow-up-right',
   discount: 'gift',
+  gift_received: 'gift',
+  gift_claimed: 'gift',
+  code_redeemed: 'key',
+  gift_delivered: 'check-circle',
 };
 
 export const notificationIcon = (type: string): NotifIcon => ICON_BY_TYPE[type] ?? 'bell';

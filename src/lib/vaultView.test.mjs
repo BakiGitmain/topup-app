@@ -89,11 +89,11 @@ describe('built from the existing parts', () => {
       assert.doesNotMatch(text, /tileLetter\(/, `${name} draws no letter tile of its own`);
     }
   });
-  it("the claim card uses the product page's own ID form and check, and the normal order screen afterwards", () => {
+  it("the claim card uses the product page's own ID form and check, and stays put afterwards (no receipt: that is the buyer's)", () => {
     assert.match(giftCard, /<IdForm/);
     assert.match(giftCard, /useIdValidation\(\{/);
     assert.match(giftCard, /packageState\(/);
-    assert.match(giftCard, /router\.push\(\{ pathname: '\/order\/\[id\]', params: \{ id: result\.deliveryOrderId \} \}\)/);
+    assert.doesNotMatch(giftCard, /params: \{ id: result\.deliveryOrderId \}/);
   });
   it('the code card copies with the shared CopyButton; the vault filters with the shared Chips', () => {
     assert.match(codeCard, /<CopyButton /);

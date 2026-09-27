@@ -8,7 +8,7 @@ import fs from 'node:fs';
 const read = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const FILES = fs.readdirSync(new URL('../migrations/', import.meta.url)).filter((f) => f.endsWith('.sql')).sort();
 const MIGRATIONS = FILES.map((f) => read(`migrations/${f}`));
-const GIFT_FILES = FILES.filter((f) => /_(gifts_and_redeem_codes|gift_checkout|gift_delivery|gift_hardening|gift_server_choice)\.sql$/.test(f));
+const GIFT_FILES = FILES.filter((f) => /_(gifts_and_redeem_codes|gift_checkout|gift_delivery|gift_hardening|gift_server_choice|gift_notifications_and_receipts)\.sql$/.test(f));
 
 const db = new PGlite();
 await db.exec(`
@@ -44,7 +44,9 @@ const GIFT_FUNCTIONS = [...new Set(GIFT_FILES.flatMap((f) => [...read(`migration
 // except the expiry sweep, which only the server (service_role) runs.
 const CUSTOMER = new Set(['checkout_gift', 'claim_gift', 'find_recipient_by_email', 'gift_order_summary', 'my_redeem_codes', 'my_vault_gifts', 'redeem_code']);
 const SERVER = new Set(['expire_gifts_and_codes']);
-ok(`found the gift functions by reading ${GIFT_FILES.length} migrations`, GIFT_FILES.length === 5 && GIFT_FUNCTIONS.length >= 20 && [...CUSTOMER, ...SERVER].every((f) => GIFT_FUNCTIONS.includes(f)), GIFT_FUNCTIONS.join(' '));
+// Admin actions redefined by a gift migration: callable when signed in, and refuse anyone but an admin inside.
+const ADMIN_GATED = new Set(['admin_set_order_status']);
+ok(`found the gift functions by reading ${GIFT_FILES.length} migrations`, GIFT_FILES.length === 6 && GIFT_FUNCTIONS.length >= 20 && [...CUSTOMER, ...SERVER].every((f) => GIFT_FUNCTIONS.includes(f)), GIFT_FUNCTIONS.join(' '));
 const privs = (await db.query(`
   select p.proname, pg_get_function_identity_arguments(p.oid) args,
          has_function_privilege('anon', p.oid, 'execute') anon,
@@ -54,8 +56,11 @@ const privs = (await db.query(`
 ok('every one of them exists in the database (no stale name in a migration)', GIFT_FUNCTIONS.every((f) => privs.some((p) => p.proname === f)), GIFT_FUNCTIONS.filter((f) => !privs.some((p) => p.proname === f)).join(' '));
 const anonCan = privs.filter((p) => p.anon);
 ok('signed out (anon): NOT ONE gift function is callable', anonCan.length === 0, anonCan.map((p) => p.proname).join(' '));
-const wrongAuthed = privs.filter((p) => p.authed !== CUSTOMER.has(p.proname));
+const wrongAuthed = privs.filter((p) => p.authed !== (CUSTOMER.has(p.proname) || ADMIN_GATED.has(p.proname)));
 ok('signed in: exactly the 7 customer functions are callable, every internal one is not', wrongAuthed.length === 0, wrongAuthed.map((p) => `${p.proname}(${p.args})=${p.authed}`).join(' '));
+for (const f of ADMIN_GATED) {
+  await rejects(`${f}: a signed-in customer is refused inside ("forbidden")`, 'authenticated', '00000000-0000-4000-8000-000000000001', `select ${f}(gen_random_uuid(), 'failed')`, /forbidden/);
+}
 ok('the expiry sweep is the server\'s alone', (await one(`select has_function_privilege('service_role', 'public.expire_gifts_and_codes()', 'execute') s`)).s === true);
 
 console.log('\n-- SECURITY DEFINER functions cannot be hijacked through search_path');

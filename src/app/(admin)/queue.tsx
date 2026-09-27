@@ -171,7 +171,7 @@ function QueueRow({
         <StatusBadge status={order.status} label={STATUS_LABELS_EN[order.status]} />
         <View style={styles.tags}>
           {order.fulfillment === 'code' && <Text style={styles.tag}>CODE</Text>}
-          <Text style={styles.amount}>{formatBirr(order.amount)}</Text>
+          {order.gift_id ? <Text style={styles.tag}>GIFT</Text> : <Text style={styles.amount}>{formatBirr(order.amount)}</Text>}
         </View>
       </View>
     </Pressable>

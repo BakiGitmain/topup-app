@@ -62,6 +62,8 @@ export default function GiftDoneScreen() {
               <Text style={styles.warn}>{t('gift.done.codeSecret')}</Text>
               <Text style={styles.small}>{t('gift.done.expires')}</Text>
               <Button label={t('gift.done.done')} onPress={finish} style={styles.done} />
+              {/* The buyer's receipt for the gift / code (the recipient never gets one). */}
+              <Button label={t('gift.done.receipt')} variant="outline" onPress={() => router.push({ pathname: '/order/[id]', params: { id: s.orderId } })} style={styles.receipt} />
             </View>
           )}
 
@@ -74,6 +76,8 @@ export default function GiftDoneScreen() {
               <Text style={styles.body}>{t('gift.done.giftBody', { pack, name: s.recipientName ?? '' })}</Text>
               <Text style={styles.small}>{t('gift.done.expires')}</Text>
               <Button label={t('gift.done.done')} onPress={finish} style={styles.done} />
+              {/* The buyer's receipt for the gift / code (the recipient never gets one). */}
+              <Button label={t('gift.done.receipt')} variant="outline" onPress={() => router.push({ pathname: '/order/[id]', params: { id: s.orderId } })} style={styles.receipt} />
             </View>
           )}
 
@@ -111,4 +115,5 @@ const styles = StyleSheet.create({
   warn: { marginTop: spacing.sm, fontFamily: fonts.medium, fontSize: 13.5, lineHeight: 19, color: colors.danger, textAlign: 'center' },
   small: { marginTop: spacing.sm, fontFamily: fonts.regular, fontSize: 12.5, color: colors.textFaint, textAlign: 'center' },
   done: { alignSelf: 'stretch', marginTop: spacing.xl },
+  receipt: { alignSelf: 'stretch', marginTop: spacing.sm },
 });

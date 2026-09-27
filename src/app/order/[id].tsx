@@ -5,6 +5,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { StateMessage } from '../../components/market/StateMessage';
 import { FeatherIcon } from '../../components/art/FeatherIcon';
+import { GiftDeliveryCard } from '../../components/order/GiftDeliveryCard';
 import { ReceiptCard } from '../../components/order/ReceiptCard';
 import { Button } from '../../components/ui/Button';
 import { ErrorBanner } from '../../components/ui/ErrorBanner';
@@ -14,14 +15,17 @@ import { useAuth } from '../../lib/auth';
 import { formatBirr } from '../../lib/catalog';
 import { fetchPayOrder } from '../../lib/checkout';
 import { useT } from '../../lib/i18n';
-import { receiptAvailable } from '../../lib/orderView';
+import { giftSideOf, receiptAvailable } from '../../lib/orderView';
 import { fetchOrder, type Order } from '../../lib/orders';
 import { fetchPortalCoinEarned } from '../../lib/portalCoin';
 import { shareReceiptImage } from '../../lib/receiptShare';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
 import { useAsync } from '../../lib/useAsync';
 
-/** The order as a receipt, with a "Download receipt" button that shares it as a picture. */
+/**
+ * The order as a receipt, with a "Download receipt" button that shares it as a picture. A gift the customer received
+ * (their delivery order) is shown as a gift instead: no price, no receipt (see lib/orderView giftSideOf).
+ */
 export default function OrderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user, session, initializing } = useAuth();
@@ -51,7 +55,9 @@ export default function OrderDetailScreen() {
   if (!initializing && !session) return <Redirect href="/sign-in" />;
 
   const data = order.data;
-  const canDownload = data !== null && receiptAvailable(data.status);
+  // The receipt is the buyer's: a gift the customer RECEIVED is shown as a gift, with no price and no download.
+  const giftSide = data ? giftSideOf(data) : null;
+  const canDownload = data !== null && giftSide !== 'delivery' && receiptAvailable(data.status);
 
   async function download() {
     if (sharing) return;
@@ -71,7 +77,7 @@ export default function OrderDetailScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xl }} showsVerticalScrollIndicator={false}>
         <Column>
-          <ScreenHeader title={t('receipt.title')} />
+          <ScreenHeader title={t(giftSide === 'delivery' ? 'order.gift.title' : 'receipt.title')} />
 
           {order.status === 'loading' && !data && <ActivityIndicator style={styles.loading} color={colors.limeDeep} />}
 
@@ -92,7 +98,11 @@ export default function OrderDetailScreen() {
                 <Text style={styles.note}>{noteFor(data, t)}</Text>
               </View>
 
-              <ReceiptCard ref={receiptRef} order={data} items={lines.data} t={t} />
+              {giftSide === 'delivery' ? (
+                <GiftDeliveryCard order={data} t={t} />
+              ) : (
+                <ReceiptCard ref={receiptRef} order={data} items={lines.data} t={t} />
+              )}
 
               {coinsEarned.data !== null && coinsEarned.data > 0 && (
                 <View style={styles.coinBadge}>
@@ -103,9 +113,9 @@ export default function OrderDetailScreen() {
 
               {canDownload ? (
                 <Button label={t('receipt.download')} onPress={download} loading={sharing} style={styles.cta} />
-              ) : (
+              ) : giftSide !== 'delivery' ? (
                 <Text style={styles.notYet}>{t('receipt.notYet')}</Text>
-              )}
+              ) : null}
               {shareError && <ErrorBanner message={shareError} />}
 
               {data.status === 'pending_payment' && (
@@ -125,6 +135,8 @@ export default function OrderDetailScreen() {
 
 function noteFor(order: Order, t: ReturnType<typeof useT>) {
   const amount = formatBirr(order.amount);
+  // The buyer's paid gift order never moves past 'paid' (it only backs the gift): say what happens next instead.
+  if (order.status === 'paid' && order.gift_kind) return t(order.gift_kind === 'gift' ? 'order.gift.buyerGift' : 'order.gift.buyerCode');
   switch (order.status) {
     case 'pending':
       return t('order.note.pending');

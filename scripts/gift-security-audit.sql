@@ -6,19 +6,21 @@ with fns(name, meant_for) as (values
   ('gift_order_summary', 'customer'), ('my_redeem_codes', 'customer'), ('my_vault_gifts', 'customer'),
   ('redeem_code', 'customer'),
   ('expire_gifts_and_codes', 'server'),
+  ('admin_set_order_status', 'admin'),
   ('_giftable_order', 'internal'), ('_insert_redeem_code', 'internal'), ('_request_ip', 'internal'),
   ('create_gift', 'internal'), ('create_redeem_code', 'internal'), ('email_lookup_limits', 'internal'),
   ('generate_redeem_code', 'internal'), ('gift_deliver_on_claim', 'internal'), ('gift_on_paid', 'internal'),
   ('gift_ttl', 'internal'), ('guard_gift_backed_order', 'internal'), ('guard_gift_delivery_order', 'internal'),
   ('guard_gift_update', 'internal'), ('guard_recipient_with_pending_gifts', 'internal'),
   ('guard_redeem_code_update', 'internal'), ('redeem_limits', 'internal'),
-  ('guard_gift_choice', 'internal'), ('gift_copy_choice', 'internal')
+  ('guard_gift_choice', 'internal'), ('gift_copy_choice', 'internal'),
+  ('_gift_person_name', 'internal'), ('notify_gift_event', 'internal'), ('notify_gift_delivered', 'internal')
 ),
 fn_checks as (
   select 'function ' || f.name || coalesce('(' || pg_get_function_identity_arguments(p.oid) || ')', ' -- MISSING') as check_name,
          p.oid is not null
            and not has_function_privilege('anon', p.oid, 'execute')
-           and has_function_privilege('authenticated', p.oid, 'execute') = (f.meant_for = 'customer')
+           and has_function_privilege('authenticated', p.oid, 'execute') = (f.meant_for in ('customer', 'admin'))
            and (f.meant_for <> 'server' or has_function_privilege('service_role', p.oid, 'execute')) as ok,
          'meant for ' || f.meant_for || coalesce(': anon=' || has_function_privilege('anon', p.oid, 'execute')
            || ' authenticated=' || has_function_privilege('authenticated', p.oid, 'execute'), '') as detail

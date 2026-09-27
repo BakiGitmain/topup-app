@@ -1,4 +1,4 @@
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
@@ -33,6 +33,18 @@ export default function VaultScreen() {
   const gifts = useAsync(() => (userId ? fetchVaultGifts() : Promise.resolve([] as VaultGift[])), userId ?? '');
   const codes = useAsync(() => (userId ? fetchMyRedeemCodes() : Promise.resolve([] as VaultRedeemCode[])), userId ?? '');
   const [filter, setFilter] = useState<VaultFilter>('all');
+  // A notification can open the Vault on one filter (a gift received -> Gifts). Each tap carries its own token, so
+  // the same notification tapped twice still switches; the params are cleared once used.
+  const { filter: filterParam, hl } = useLocalSearchParams<{ filter?: string; hl?: string }>();
+  const [appliedTap, setAppliedTap] = useState<string | undefined>(undefined);
+  if (filterParam && hl && hl !== appliedTap && (VAULT_FILTERS as readonly string[]).includes(filterParam)) {
+    // Adjusting state while rendering, keyed on the tap token (React's pattern for "a prop changed"): once per tap.
+    setAppliedTap(hl);
+    setFilter(filterParam as VaultFilter);
+  }
+  useEffect(() => {
+    if (filterParam) router.setParams({ filter: undefined, hl: undefined });
+  }, [filterParam]);
   const reloadAll = useCallback(() => {
     vault.reload();
     gifts.reload();

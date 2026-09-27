@@ -70,6 +70,17 @@ export function receiptAvailable(status: string): boolean {
   return !['pending_payment', 'payment_mismatch', 'cancelled'].includes(status);
 }
 
+/**
+ * Which side of a gift an order is (owner's rule, 2026-09-27: the receipt is the BUYER's). 'delivery' = the
+ * recipient's delivery order (orders.gift_id): shown as a gift, never as a receipt, never with a price (it carries
+ * none, 20261021090000). 'purchase' = the buyer's order behind a gift or code: a normal receipt. null = not a gift.
+ */
+export function giftSideOf(order: { gift_id?: string | null; gift_kind?: string | null }): 'delivery' | 'purchase' | null {
+  if (order.gift_id) return 'delivery';
+  if (order.gift_kind) return 'purchase';
+  return null;
+}
+
 /** What an admin reads for one payment attempt: what ShegerPay said, the amount it found, and whether it was the test key. */
 export function attemptText(a: { outcome: string; verified_amount: number | string | null; mode: string | null }): string {
   const label: Record<string, string> = {

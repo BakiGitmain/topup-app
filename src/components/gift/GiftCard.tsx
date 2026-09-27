@@ -23,7 +23,8 @@ import { daysLeft } from '../../lib/vaultView';
 /**
  * A received gift in the Vault. The shop's own product art (ProductArt) and the product page's own ID form and check
  * (IdForm + useIdValidation, the same rules checkout applies) -- what makes it a gift is only a small "Gift" badge and
- * who it is from. Claim: claim_gift, then the ordinary delivery step; the result is the normal order screen.
+ * who it is from. Claim: claim_gift, then the ordinary delivery step; the card itself shows the result (no receipt:
+ * that is the buyer's).
  */
 export function GiftCard({ gift, onChanged }: { gift: VaultGift; onChanged: () => void }) {
   const t = useT();
@@ -65,10 +66,10 @@ export function GiftCard({ gift, onChanged }: { gift: VaultGift; onChanged: () =
     setProblem(null);
     try {
       const result = await claimGift(gift.id, fields.length > 0 ? normalizeFields(fields, allValues) : {});
+      // Stay here: the card turns into "Claimed and delivered" (a code appears with the Vault's gift cards). No
+      // receipt screen -- the receipt is the buyer's, not the recipient's.
       toast(t(result.delivery === 'delivered' ? 'vault.gift.deliveredToast' : 'vault.gift.queued'));
       onChanged();
-      // The same "here is your order" screen a normal purchase shows (receipt, and the code is in the Vault).
-      router.push({ pathname: '/order/[id]', params: { id: result.deliveryOrderId } });
     } catch (err) {
       setProblem(t(`vault.claimErr.${claimErrorOf(err)}` as StringKey));
       onChanged();

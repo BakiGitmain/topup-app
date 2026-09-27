@@ -184,3 +184,63 @@ describe('panel polish: icons, cap, empty state', () => {
     assert.match(panel, /t\('notif\.emptyHint'\)/);
   });
 });
+
+describe('gift notifications (20261021090000): recipient -> Vault, buyer -> their receipt', async () => {
+  const { giftSideOf } = await import('./orderView.ts');
+  const tt = (key, vars = {}) => `${key}|${Object.entries(vars).map(([k, v]) => `${k}=${v}`).join(',')}`;
+  const G = '11111111-2222-4333-8444-555555555555';
+  const ORDER = '66666666-7777-4888-8999-aaaaaaaaaaaa';
+  const note = (type, data) => ({ type, title: 'T', body: 'B', data });
+
+  it('each type renders in the customer\'s language from its data', () => {
+    assert.equal(notificationText(note('gift_received', { product_name: 'Roblox', pack_label: '800 Robux', sender_name: 'Abel' }), tt).body, 'notif.giftReceived.body|name=Abel,product=Roblox,pack=800 Robux');
+    assert.equal(notificationText(note('gift_claimed', { product_name: 'Roblox', pack_label: '800 Robux', recipient_name: 'Bruk' }), tt).body, 'notif.giftClaimed.body|name=Bruk,product=Roblox,pack=800 Robux');
+    assert.equal(notificationText(note('code_redeemed', { product_name: 'Roblox', pack_label: '800 Robux' }), tt).body, 'notif.codeRedeemed.body|product=Roblox,pack=800 Robux');
+    assert.equal(notificationText(note('gift_delivered', { product_name: 'Roblox', pack_label: '800 Robux' }), tt).title, 'notif.giftDelivered.title|');
+  });
+  it('a redeemed code names nobody, even if the data somehow carried a name', () => {
+    const body = notificationText(note('code_redeemed', { product_name: 'Roblox', pack_label: '800 Robux', recipient_name: 'Chala' }), tt).body;
+    assert.doesNotMatch(body, /Chala/);
+  });
+  it('incomplete data falls back to the stored text', () => {
+    assert.deepEqual(notificationText(note('gift_received', {}), tt), { title: 'T', body: 'B' });
+  });
+  it('the recipient\'s side opens the Vault (gifts; a delivered code on the gift cards), never a receipt', () => {
+    assert.deepEqual(notificationTarget(note('gift_received', { gift_id: G })), { kind: 'vault', filter: 'gifts' });
+    assert.deepEqual(notificationTarget(note('gift_delivered', { order_id: ORDER, fulfillment: 'code' })), { kind: 'vault', filter: 'cards' });
+    assert.deepEqual(notificationTarget(note('gift_delivered', { order_id: ORDER, fulfillment: 'topup' })), { kind: 'vault', filter: 'gifts' });
+  });
+  it('the buyer\'s side opens their order: the receipt', () => {
+    assert.deepEqual(notificationTarget(note('gift_claimed', { order_id: ORDER })), { kind: 'order', orderId: ORDER });
+    assert.deepEqual(notificationTarget(note('code_redeemed', { order_id: ORDER })), { kind: 'order', orderId: ORDER });
+    assert.equal(notificationTarget(note('code_redeemed', { order_id: 'nope' })), null);
+  });
+  it('rows look tappable and say where they go; gift icons', () => {
+    assert.equal(notificationAction(note('gift_received', {}), new Map()).opens, 'notif.opens.vault');
+    assert.equal(notificationAction(note('gift_claimed', { order_id: ORDER }), new Map()).opens, 'notif.opens.receipt');
+    assert.equal(notificationIcon('gift_received'), 'gift');
+    assert.equal(notificationIcon('code_redeemed'), 'key');
+    assert.equal(notificationIcon('gift_delivered'), 'check-circle');
+  });
+  it('the receipt is the buyer\'s: a gift received is its own side', () => {
+    assert.equal(giftSideOf({ gift_id: G }), 'delivery');
+    assert.equal(giftSideOf({ gift_kind: 'gift' }), 'purchase');
+    assert.equal(giftSideOf({ gift_kind: 'redeem_code' }), 'purchase');
+    assert.equal(giftSideOf({}), null);
+  });
+  it('the screens follow it', () => {
+    const read = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8');
+    const orderScreen = read('../app/order/[id].tsx');
+    assert.match(orderScreen, /giftSide === 'delivery' \? \(\s*<GiftDeliveryCard/, 'a gift received shows the gift card, not ReceiptCard');
+    assert.match(orderScreen, /canDownload = data !== null && giftSide !== 'delivery'/, 'and has no download');
+    assert.doesNotMatch(read('../components/order/GiftDeliveryCard.tsx'), /amount|formatBirr/, 'no price on the recipient\'s side');
+    assert.doesNotMatch(read('../components/gift/GiftCard.tsx'), /deliveryOrderId \}\s*\}\);\s*\n\s*\} catch/, 'claiming does not jump to a receipt');
+    assert.doesNotMatch(read('../components/gift/GiftCard.tsx'), /router\.push\(\{ pathname: '\/order\/\[id\]', params: \{ id: result\./);
+    assert.match(read('../app/gift/done/[id].tsx'), /t\('gift\.done\.receipt'\)/, 'the buyer is offered their receipt right after paying');
+    assert.match(read('../components/market/OrderRow.tsx'), /giftSideOf\(order\) === 'delivery'/);
+    assert.match(read('../components/admin/OrderSheet.tsx'), /const canRefundCompleted = !giftDelivery/);
+    const panel = read('../components/header/NotificationPanel.tsx');
+    assert.match(panel, /target\?\.kind === 'vault'/);
+    assert.match(panel, /target\?\.kind === 'order'/);
+  });
+});

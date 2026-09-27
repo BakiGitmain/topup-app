@@ -159,6 +159,19 @@ try {
   check("the recipient's vault: every gift claimed and delivered, with the sender's name", vault.length === 3 && vault.every((g) => g.status === 'claimed' && g.delivery_status === 'completed' && g.sender_name === 'GDEL buyer'));
   const codes = (await rpc(buyer, 'my_redeem_codes', {})).json;
   check("the buyer's vault: their redeem code, marked redeemed", codes.length === 1 && codes[0].code === c1.code && codes[0].status === 'redeemed');
+
+  // ---- 6. who is told what (20261021090000), and receipts are the buyer's
+  console.log('\n-- notifications and receipts');
+  const inbox = async (token) => rest(token, `notifications?select=type,data&order=created_at.asc`);
+  const friendInbox = await inbox(friend);
+  const buyerInbox = await inbox(buyer);
+  const otherInbox = await inbox(other);
+  check('the friend was told about each of the 3 gifts sent to them', friendInbox.filter((n) => n.type === 'gift_received').length === 3, JSON.stringify(friendInbox.map((n) => n.type)));
+  check('the buyer was told each gift was claimed (3) and that the code was redeemed (1)', buyerInbox.filter((n) => n.type === 'gift_claimed').length === 3 && buyerInbox.filter((n) => n.type === 'code_redeemed').length === 1);
+  check('...and the redeemed-code notice names nobody', !/GDEL other|gdel-other/i.test(JSON.stringify(buyerInbox.filter((n) => n.type === 'code_redeemed'))));
+  check('the redeemer got no "you received a gift" (they redeemed it themselves)', otherInbox.every((n) => n.type !== 'gift_received'));
+  const received = await rest(friend, `orders?select=amount&gift_id=not.is.null`);
+  check("the recipient's delivery orders carry no price (Br 0): the receipt is the buyer's", received.length === 3 && received.every((o) => Number(o.amount) === 0));
 } finally {
   const [left] = sql(CLEANUP);
   check('cleanup: throwaway accounts and everything they made are gone', Number(left.users_left) === 0);

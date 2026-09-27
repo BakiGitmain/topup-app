@@ -34,8 +34,9 @@ export function OrderTrail({ order }: { order: QueueOrder }) {
 
       <View style={styles.card}>
         <Text style={styles.title}>Payment</Text>
-        <Line label="Method" value={method ? (METHOD[method] ?? method) : 'Not paid yet'} />
-        <Line label="Order total" value={formatBirr(order.amount)} />
+        {/* A gift delivery was paid on the BUYER's order; this one carries no price (20261021090000). */}
+        <Line label="Method" value={order.gift_id ? 'Gift (paid on the buyer\'s order)' : method ? (METHOD[method] ?? method) : 'Not paid yet'} />
+        <Line label="Order total" value={order.gift_id ? '-' : formatBirr(order.amount)} />
         {order.payment_verified_amount !== null && order.payment_verified_amount !== undefined ? (
           <Line label="Verified amount" value={formatBirr(Number(order.payment_verified_amount))} />
         ) : null}

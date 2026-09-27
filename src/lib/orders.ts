@@ -46,7 +46,7 @@ export type Order = {
 };
 
 export const ORDER_COLUMNS =
-  'id, product_name, option_label, amount, status, fulfillment, delivery, region_label, validation_id, validated_account_region, validated_player_name, id_self_declared_at, created_at, completed_at, payment_provider, payment_reference, paid_at, payment_verified_amount, payment_mode';
+  'id, product_name, option_label, amount, status, fulfillment, delivery, region_label, validation_id, validated_account_region, validated_player_name, id_self_declared_at, created_at, completed_at, payment_provider, payment_reference, paid_at, payment_verified_amount, payment_mode, gift_kind, gift_id';
 
 export type OrderRow = Omit<Order, 'amount'> & { amount: number | string };
 
@@ -58,7 +58,7 @@ export function toOrder(row: OrderRow): Order {
 
 // A gift order's gift (gifts.order_id) or redeem code: the state the Orders list shows. orders.gift_id is the OTHER
 // link (a recipient's delivery order), hence the named foreign key.
-const GIFT_COLUMNS = 'gift_kind, gift_id, gifts!gifts_order_id_fkey ( status ), redeem_codes ( status )';
+const GIFT_COLUMNS = 'gifts!gifts_order_id_fkey ( status ), redeem_codes ( status )';
 type GiftRow = { gifts?: { status: string } | null; redeem_codes?: { status: string } | null };
 
 export async function fetchMyOrders(userId: string): Promise<Order[]> {

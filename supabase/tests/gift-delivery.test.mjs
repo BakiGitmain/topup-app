@@ -61,7 +61,8 @@ const g1 = await buy(O_CARD, 'gift', FRIEND);
 ok('before the claim: no delivery order', (await deliveries(g1.gift_id)).length === 0);
 await claim(FRIEND, g1.gift_id);
 const [d1] = await deliveries(g1.gift_id);
-ok('after: exactly one, for the RECIPIENT, that pack, the gift\'s value, waiting for delivery like any order', d1 && d1.user_id === FRIEND && d1.option_id === O_CARD && Number(d1.amount) === 300 && d1.status === 'pending' && d1.fulfillment === 'code' && !d1.gift_kind, JSON.stringify(d1));
+// Br 0 since 20261021090000: the recipient's delivery order is not a sale and never shows what their friend paid.
+ok('after: exactly one, for the RECIPIENT, that pack, no price (Br 0), waiting for delivery like any order', d1 && d1.user_id === FRIEND && d1.option_id === O_CARD && Number(d1.amount) === 0 && d1.status === 'pending' && d1.fulfillment === 'code' && !d1.gift_kind, JSON.stringify(d1));
 ok("it is NOT the buyer's order, which stays frozen 'paid'", d1.id !== g1.order_id && (await one(`select status from orders where id = $1`, [g1.order_id])).status === 'paid');
 await rejects('a claim that is refused creates nothing (it all rolls back together)', 'authenticated', FRIEND, `select claim_gift($1)`, /gift_already_claimed/, [g1.gift_id]);
 ok('...still exactly one', (await deliveries(g1.gift_id)).length === 1);
