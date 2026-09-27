@@ -97,6 +97,8 @@ export type VaultGift = {
   regionId: string | null;
   regionLabel: string | null;
   buyerFields: BuyerField[];
+  /** The buyer's choices (e.g. the server), made when buying: fixed, the recipient only fills the rest. */
+  presetFields: Record<string, string>;
   idValidation: 'supplier' | 'none';
   regionLocked: boolean;
   accountRegionCodes: string[];
@@ -128,6 +130,9 @@ export async function fetchVaultGifts(): Promise<VaultGift[]> {
     regionId: (g.region_id as string | null) ?? null,
     regionLabel: (g.region_label as string | null) ?? null,
     buyerFields: ((Array.isArray(g.buyer_fields) ? g.buyer_fields : []) as BuyerField[]).map((f) => ({ ...f, type: f.type === 'select' ? 'select' : 'text' })),
+    presetFields: Object.fromEntries(
+      Object.entries(g.preset_fields && typeof g.preset_fields === 'object' ? (g.preset_fields as Record<string, unknown>) : {}).map(([k, v]) => [k, String(v)])
+    ),
     idValidation: g.id_validation === 'supplier' ? 'supplier' : 'none',
     regionLocked: g.region_locked === true,
     accountRegionCodes: (Array.isArray(g.account_region_codes) ? g.account_region_codes : []) as string[],

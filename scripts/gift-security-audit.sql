@@ -11,7 +11,8 @@ with fns(name, meant_for) as (values
   ('generate_redeem_code', 'internal'), ('gift_deliver_on_claim', 'internal'), ('gift_on_paid', 'internal'),
   ('gift_ttl', 'internal'), ('guard_gift_backed_order', 'internal'), ('guard_gift_delivery_order', 'internal'),
   ('guard_gift_update', 'internal'), ('guard_recipient_with_pending_gifts', 'internal'),
-  ('guard_redeem_code_update', 'internal'), ('redeem_limits', 'internal')
+  ('guard_redeem_code_update', 'internal'), ('redeem_limits', 'internal'),
+  ('guard_gift_choice', 'internal'), ('gift_copy_choice', 'internal')
 ),
 fn_checks as (
   select 'function ' || f.name || coalesce('(' || pg_get_function_identity_arguments(p.oid) || ')', ' -- MISSING') as check_name,

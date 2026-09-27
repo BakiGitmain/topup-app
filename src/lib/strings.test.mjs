@@ -24,7 +24,7 @@ describe('the two dictionaries agree', () => {
 
 describe('what is still English in Amharic is exactly what is listed for review', () => {
   // Legitimately identical: brand names, an example email, and similar.
-  const SAME_ON_PURPOSE = new Set(['auth.emailPlaceholder', 'account.google', 'gift.email.placeholder']);
+  const SAME_ON_PURPOSE = new Set(['auth.emailPlaceholder', 'account.google', 'gift.email.placeholder', 'vault.gift.chosen']);
   const stillEnglish = KEYS.filter((k) => !hasEthiopic(am[k]) && !SAME_ON_PURPOSE.has(k));
 
   it('every English placeholder is on the review list (so none is forgotten or mistaken for a translation)', () => {
@@ -125,5 +125,22 @@ describe('one confirmation dialog for the whole app', () => {
       assert.ok(!/\bAlert\.alert\(|window\.confirm\(/.test(text), `${file} must use confirmDestructive`);
     }
     assert.match(read('src/app/_layout.tsx'), /<ConfirmHost \/>/);
+  });
+  it('a modal screen\'s own dialog asks while it is open, and the root one takes over again when it closes', async () => {
+    const offRoot = registerConfirmHost((r) => r.resolve(false));
+    const offModal = registerConfirmHost((r) => r.resolve(true));
+    assert.equal(await confirmDestructive('a', 'b', 'c'), true, 'the modal screen\'s dialog');
+    offModal();
+    assert.equal(await confirmDestructive('a', 'b', 'c'), false, 'the root dialog again, not "no dialog at all"');
+    offRoot();
+  });
+  it('every screen presented as a native modal that asks for confirmation mounts its own dialog (iOS: the root one cannot show over a modal sheet)', () => {
+    const layout = read('src/app/_layout.tsx');
+    const modals = [...layout.matchAll(/name="([^"]+)"\s*options=\{\{[^}]*presentation: 'modal'/g)].map((m) => m[1]);
+    assert.ok(modals.includes('product/[id]'), modals.join(' '));
+    for (const name of modals) {
+      const text = read(`src/app/${name}.tsx`);
+      if (/confirmDestructive\(/.test(text)) assert.match(text, /<ConfirmHost \/>/, `${name} asks for confirmation but has no ConfirmHost of its own`);
+    }
   });
 });

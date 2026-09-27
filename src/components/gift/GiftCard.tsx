@@ -16,6 +16,7 @@ import type { StringKey } from '../../lib/strings';
 import { colors, fonts, radius, shadow, spacing } from '../../lib/theme';
 import { useToast } from '../../lib/toast';
 import { useIdValidation } from '../../lib/useIdValidation';
+import { claimFieldsSplit } from '../../lib/giftMode';
 import type { VaultGift } from '../../lib/vault';
 import { daysLeft } from '../../lib/vaultView';
 
@@ -41,7 +42,11 @@ export function GiftCard({ gift, onChanged }: { gift: VaultGift; onChanged: () =
   const [ticked, setTicked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const { check, retry } = useIdValidation({ regionId: gift.regionId, buyerFields: fields, values, enabled: pending && idMode === 'supplier' });
+  // The buyer already chose the dropdowns (e.g. the server): shown, fixed, and laid over what is typed here -- the
+  // server does the same (claim_gift), so the check and the claim both see the buyer's choice.
+  const { toFill, chosen } = claimFieldsSplit(fields, gift.presetFields);
+  const allValues = { ...values, ...gift.presetFields };
+  const { check, retry } = useIdValidation({ regionId: gift.regionId, buyerFields: fields, values: allValues, enabled: pending && idMode === 'supplier' });
 
   const accountRegion = check.kind === 'valid' ? check.accountRegion : null;
   const pack = packageState(
@@ -51,7 +56,7 @@ export function GiftCard({ gift, onChanged }: { gift: VaultGift; onChanged: () =
   const wrongRegion = idMode === 'supplier' && check.kind === 'valid' && (pack === 'wrong_region' || pack === 'region_unknown');
   const ready =
     pending &&
-    isFieldsComplete(fields, values) &&
+    isFieldsComplete(fields, allValues) &&
     (idMode === 'supplier' ? check.kind === 'valid' && pack === 'ok' : idMode === 'tick' ? ticked : true);
 
   async function claim() {
@@ -59,7 +64,7 @@ export function GiftCard({ gift, onChanged }: { gift: VaultGift; onChanged: () =
     setBusy(true);
     setProblem(null);
     try {
-      const result = await claimGift(gift.id, fields.length > 0 ? normalizeFields(fields, values) : {});
+      const result = await claimGift(gift.id, fields.length > 0 ? normalizeFields(fields, allValues) : {});
       toast(t(result.delivery === 'delivered' ? 'vault.gift.deliveredToast' : 'vault.gift.queued'));
       onChanged();
       // The same "here is your order" screen a normal purchase shows (receipt, and the code is in the Vault).
@@ -115,8 +120,13 @@ export function GiftCard({ gift, onChanged }: { gift: VaultGift; onChanged: () =
       {pending && fields.length > 0 && (
         <View style={styles.idBox}>
           <Text style={styles.idTitle}>{gift.idSectionTitle ?? t('product.idTitle')}</Text>
+          {chosen.map((c) => (
+            <Text key={c.label} style={styles.chosen}>
+              {t('vault.gift.chosen', { label: c.label, value: c.value })}
+            </Text>
+          ))}
           <IdForm
-            fields={fields}
+            fields={toFill}
             values={values}
             onChange={(key, value) => {
               setValues((v) => ({ ...v, [key]: value }));
@@ -153,6 +163,7 @@ export function GiftCard({ gift, onChanged }: { gift: VaultGift; onChanged: () =
 }
 
 const styles = StyleSheet.create({
+  chosen: { marginBottom: spacing.sm, fontFamily: fonts.medium, fontSize: 14, color: colors.text },
   card: { padding: spacing.md, borderRadius: radius.xl, backgroundColor: colors.bg, borderWidth: 1.5, borderColor: colors.limeSoft },
   cardDone: { borderColor: colors.border, opacity: 0.85 },
   head: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },

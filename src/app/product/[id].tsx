@@ -54,9 +54,10 @@ import { useAsync } from '../../lib/useAsync';
 import { useIdValidation } from '../../lib/useIdValidation';
 import { useScrollContainer, useScrollToHighlight } from '../../lib/useScrollToHighlight';
 import { checkoutGift, giftCheckoutError } from '../../lib/gift';
-import { giftTerms, readGiftParams, type GiftRouteParams } from '../../lib/giftMode';
+import { giftChoiceFields, giftTerms, readGiftParams, type GiftRouteParams } from '../../lib/giftMode';
 import { GiftBanner } from '../../components/gift/GiftBanner';
 import { GiftTerms } from '../../components/gift/GiftTerms';
+import { ConfirmHost } from '../../components/ui/ConfirmHost';
 
 const BLOCKER_TEXT: Record<Blocker, Parameters<ReturnType<typeof useT>>[0]> = {
   choose_package: 'product.blocker.choose',
@@ -156,8 +157,10 @@ export default function ProductScreen() {
     onConsumed: () => router.setParams({ highlight: undefined, hl: undefined }),
   });
 
+  // Gift mode: only the pack's dropdown choices (e.g. the server) are the buyer's to make; the recipient types their
+  // own ID when they claim (see lib/giftMode giftChoiceFields and the gift_server_choice migration).
   const buyerFields: BuyerField[] = gift
-    ? []
+    ? giftChoiceFields(region?.buyerFields ?? [])
     : region
     ? region.buyerFields
     : product && needsAccountId(product.category)
@@ -175,7 +178,8 @@ export default function ProductScreen() {
 
   const values: Record<string, string> = {};
   buyerFields.forEach((field, index) => {
-    values[field.key] = edited[field.key] ?? (index === 0 ? accountId : undefined) ?? lastFields?.[field.key] ?? '';
+    // A gift is for someone else: never prefill it with the buyer's own last ID or server.
+    values[field.key] = gift ? (edited[field.key] ?? '') : (edited[field.key] ?? (index === 0 ? accountId : undefined) ?? lastFields?.[field.key] ?? '');
   });
   const fieldsComplete = isFieldsComplete(buyerFields, values);
 
@@ -309,7 +313,7 @@ export default function ProductScreen() {
     setNotice(null);
     setBuying(true);
     try {
-      const result = await checkoutGift(selected.id, gift.kind, gift.kind === 'gift' ? gift.to : null);
+      const result = await checkoutGift(selected.id, gift.kind, gift.kind === 'gift' ? gift.to : null, normalizeFields(buyerFields, values));
       if (result.paid) router.replace({ pathname: '/gift/done/[id]', params: { id: result.orderId } });
       else router.replace({ pathname: '/pay/[id]', params: { id: result.orderId } });
     } catch (err) {
@@ -326,6 +330,8 @@ export default function ProductScreen() {
                 ? 'gift.email.notFound'
                 : e.kind === 'pack_unavailable'
                   ? 'gift.error.pack'
+                  : e.kind === 'choice'
+                    ? 'gift.error.choice'
                   : e.kind === 'pending_order'
                     ? 'gift.error.pending'
                     : 'gift.error.other'
@@ -390,7 +396,7 @@ export default function ProductScreen() {
 
                 {buyerFields.length > 0 && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>{region?.idSectionTitle ?? t('product.idTitle')}</Text>
+                    <Text style={styles.sectionTitle}>{gift ? t('gift.choice.title') : (region?.idSectionTitle ?? t('product.idTitle'))}</Text>
                     <IdForm
                       fields={buyerFields}
                       values={values}
@@ -400,7 +406,7 @@ export default function ProductScreen() {
                       onRetry={retry}
                       ticked={ticked}
                       onTick={setTicked}
-                      hint={region?.idSectionHint ?? t('product.gameIdHint')}
+                      hint={gift ? t(gift.kind === 'gift' ? 'gift.choice.hintGift' : 'gift.choice.hintCode') : (region?.idSectionHint ?? t('product.gameIdHint'))}
                     />
                   </View>
                 )}
@@ -478,6 +484,8 @@ export default function ProductScreen() {
           </View>
         )}
       </KeyboardAvoidingView>
+      {/* This screen is an iOS modal sheet: the root dialog can't appear over it, so it has its own (see lib/confirm). */}
+      <ConfirmHost />
     </SafeAreaView>
   );
 }

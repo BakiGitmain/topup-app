@@ -8,7 +8,7 @@ import fs from 'node:fs';
 const read = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const FILES = fs.readdirSync(new URL('../migrations/', import.meta.url)).filter((f) => f.endsWith('.sql')).sort();
 const MIGRATIONS = FILES.map((f) => read(`migrations/${f}`));
-const GIFT_FILES = FILES.filter((f) => /_(gifts_and_redeem_codes|gift_checkout|gift_delivery|gift_hardening)\.sql$/.test(f));
+const GIFT_FILES = FILES.filter((f) => /_(gifts_and_redeem_codes|gift_checkout|gift_delivery|gift_hardening|gift_server_choice)\.sql$/.test(f));
 
 const db = new PGlite();
 await db.exec(`
@@ -44,7 +44,7 @@ const GIFT_FUNCTIONS = [...new Set(GIFT_FILES.flatMap((f) => [...read(`migration
 // except the expiry sweep, which only the server (service_role) runs.
 const CUSTOMER = new Set(['checkout_gift', 'claim_gift', 'find_recipient_by_email', 'gift_order_summary', 'my_redeem_codes', 'my_vault_gifts', 'redeem_code']);
 const SERVER = new Set(['expire_gifts_and_codes']);
-ok(`found the gift functions by reading ${GIFT_FILES.length} migrations`, GIFT_FILES.length === 4 && GIFT_FUNCTIONS.length >= 20 && [...CUSTOMER, ...SERVER].every((f) => GIFT_FUNCTIONS.includes(f)), GIFT_FUNCTIONS.join(' '));
+ok(`found the gift functions by reading ${GIFT_FILES.length} migrations`, GIFT_FILES.length === 5 && GIFT_FUNCTIONS.length >= 20 && [...CUSTOMER, ...SERVER].every((f) => GIFT_FUNCTIONS.includes(f)), GIFT_FUNCTIONS.join(' '));
 const privs = (await db.query(`
   select p.proname, pg_get_function_identity_arguments(p.oid) args,
          has_function_privilege('anon', p.oid, 'execute') anon,

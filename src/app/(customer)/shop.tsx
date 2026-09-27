@@ -10,6 +10,7 @@ import { SearchBar } from '../../components/market/SearchBar';
 import { StateMessage } from '../../components/market/StateMessage';
 import { GiftBanner } from '../../components/gift/GiftBanner';
 import { ShopHeader } from '../../components/header/ShopHeader';
+import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { Column, TabScroll } from '../../components/ui/TabScroll';
 import { useAuth } from '../../lib/auth';
 import {
@@ -86,6 +87,11 @@ export function ShopCatalog({ gift }: { gift?: GiftTarget }) {
     <TabScroll refreshing={refreshing} onRefresh={onRefresh} stickyHeaderIndices={[1]}>
       {gift ? (
         <Column style={styles.giftBanner}>
+          {/* Back to the step before (the recipient's email, or the gift menu): the shop is a tab root, this isn't. */}
+          <ScreenHeader
+            title={t(gift.kind === 'gift' ? 'gift.send.title' : 'gift.code.title')}
+            onBack={() => (router.canGoBack() ? router.back() : router.replace('/gift'))}
+          />
           <GiftBanner target={gift} />
         </Column>
       ) : (

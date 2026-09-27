@@ -8,7 +8,8 @@ import { FeatherIcon } from '../art/FeatherIcon';
 
 /**
  * The app's confirmation dialog: a rounded card in the app's palette over a dimmed screen, with a Cancel and a Confirm button.
- * Mount it ONCE (root layout). Screens never render it; they call confirmDestructive() from lib/confirm.
+ * Mounted in the root layout, and again inside any screen presented as a native modal (see lib/confirm: on iOS the
+ * root one cannot appear over a modal sheet). Screens only call confirmDestructive() from lib/confirm.
  * Cancel, tapping outside and the Android back button all mean "no".
  */
 export function ConfirmHost() {

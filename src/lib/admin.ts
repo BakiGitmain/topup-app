@@ -43,7 +43,7 @@ type QueueRow = OrderRow & {
   profiles: { display_name: string; email: string | null } | null;
 };
 
-const QUEUE_COLUMNS = `${ORDER_COLUMNS}, user_id, profiles ( display_name, email )`;
+const QUEUE_COLUMNS = `${ORDER_COLUMNS}, user_id, profiles!user_id ( display_name, email )`;
 
 function toQueueOrder(row: QueueRow): QueueOrder {
   return {

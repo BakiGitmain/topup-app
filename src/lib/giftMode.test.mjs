@@ -44,11 +44,11 @@ describe('the rules that live in screens', () => {
   const shop = src('../app/(customer)/shop.tsx');
   const admin = src('./admin.ts');
   const gift = src('./gift.ts');
-  it('gift mode never asks for a player ID and never sends one: no fields, no supplier check, no cart', () => {
-    assert.match(product, /const buyerFields: BuyerField\[\] = gift\s*\?\s*\[\]/);
+  it('gift mode never asks for a player ID: only the pack\'s dropdown choices (e.g. the server), no supplier check, no cart', () => {
+    assert.match(product, /const buyerFields: BuyerField\[\] = gift\s*\?\s*giftChoiceFields\(region\?\.buyerFields \?\? \[\]\)/);
     assert.match(product, /const idMode: 'supplier' \| 'tick' \| 'none' = gift\s*\?\s*'none'/);
-    assert.match(product, /checkoutGift\(selected\.id, gift\.kind, gift\.kind === 'gift' \? gift\.to : null\)/);
-    assert.match(gift, /rpc\('checkout_gift', \{ p_option_id: optionId, p_kind: kind, p_recipient: recipientId \}\)/, 'no delivery/fields argument exists');
+    assert.match(product, /checkoutGift\(selected\.id, gift\.kind, gift\.kind === 'gift' \? gift\.to : null, normalizeFields\(buyerFields, values\)\)/);
+    assert.match(gift, /rpc\('checkout_gift', \{ p_option_id: optionId, p_kind: kind, p_recipient: recipientId, p_fields: choices \}\)/);
     assert.match(src('../components/product/ActionBar.tsx'), /\{!giftLabel && \(/, 'no add-to-cart while gifting');
   });
   it('the admin queue and its badge never list a gift or redeem-code order', () => {
@@ -71,5 +71,36 @@ describe('the rules that live in screens', () => {
     const keys = [...new Set([...strings.matchAll(/'(gift\.[a-zA-Z.]+)':/g)].map((m) => m[1]))];
     assert.ok(keys.length >= 30, String(keys.length));
     for (const key of keys) assert.equal(strings.split(`'${key}':`).length - 1, 2, key);
+  });
+});
+
+describe('gifting a pack with a server choice (the buyer picks it, the recipient types only their ID)', async () => {
+  const { claimFieldsSplit, giftChoiceFields } = await import('./giftMode.ts');
+  const FIELDS = [
+    { key: 'player_id', label: 'Player ID', type: 'text' },
+    { key: 'server', label: 'Server', type: 'select', options: [{ label: 'Asia', value: 'asia' }, { label: 'Europe', value: 'eu' }] },
+  ];
+  it('the buyer fills only the dropdowns', () => {
+    assert.deepEqual(giftChoiceFields(FIELDS).map((f) => f.key), ['server']);
+    assert.deepEqual(giftChoiceFields([{ key: 'player_id', label: 'ID', type: 'text' }]), []);
+  });
+  it('the recipient fills the rest; the choice is shown by its label', () => {
+    const { toFill, chosen } = claimFieldsSplit(FIELDS, { server: 'eu' });
+    assert.deepEqual(toFill.map((f) => f.key), ['player_id']);
+    assert.deepEqual(chosen, [{ label: 'Server', value: 'Europe' }]);
+  });
+  it('nothing preset (older gifts, packs without a dropdown): the recipient fills everything', () => {
+    assert.deepEqual(claimFieldsSplit(FIELDS, {}).toFill.map((f) => f.key), ['player_id', 'server']);
+  });
+  it('the screens use it: the product page sends the choices, the claim card lays them over what is typed', () => {
+    const page = src('../app/product/[id].tsx');
+    assert.match(page, /giftChoiceFields\(region\?\.buyerFields/);
+    assert.match(page, /checkoutGift\([^)]*normalizeFields\(buyerFields, values\)\)/);
+    const card = src('../components/gift/GiftCard.tsx');
+    assert.match(card, /const allValues = \{ \.\.\.values, \.\.\.gift\.presetFields \}/);
+    assert.match(card, /normalizeFields\(fields, allValues\)/);
+  });
+  it('the gift shop has a way back (it is not a tab root)', () => {
+    assert.match(src('../app/(customer)/shop.tsx'), /<ScreenHeader[\s\S]{0,200}router\.replace\('\/gift'\)/);
   });
 });

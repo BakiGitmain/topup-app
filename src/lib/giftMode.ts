@@ -48,3 +48,24 @@ export function giftTerms(kind: GiftTarget['kind'], pack: { regionLocked: boolea
   }
   return terms;
 }
+
+/**
+ * The fields the BUYER fills when gifting: the region's dropdown choices (e.g. the server). Everything typed (the
+ * player ID) is the recipient's, at claim. checkout_gift enforces the same split.
+ */
+export function giftChoiceFields<F extends { type: string }>(fields: readonly F[]): F[] {
+  return fields.filter((f) => f.type === 'select');
+}
+
+/** The recipient's side: the fields still to fill at claim (the buyer's choices are already made), and those choices
+ * shown by their option labels ("Server: Europe"). */
+export function claimFieldsSplit<F extends { key: string; label: string; type: string; options?: { label: string; value: string }[] }>(
+  fields: readonly F[],
+  preset: Record<string, string>
+): { toFill: F[]; chosen: { label: string; value: string }[] } {
+  const toFill = fields.filter((f) => !(f.key in preset));
+  const chosen = fields
+    .filter((f) => f.key in preset)
+    .map((f) => ({ label: f.label, value: f.options?.find((o) => o.value === preset[f.key])?.label ?? preset[f.key] }));
+  return { toFill, chosen };
+}

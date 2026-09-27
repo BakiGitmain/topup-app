@@ -41,11 +41,11 @@ export type GiftCheckout = {
 };
 
 /**
- * Buys one pack as a gift or a redeem code (checkout_gift). No player ID is asked: the recipient gives it at claim
- * time. Throws the database's refusal (see giftCheckoutError).
+ * Buys one pack as a gift or a redeem code (checkout_gift). `choices` = the pack's dropdown fields (e.g. the server),
+ * which the buyer picks; no player ID is asked: the recipient gives it at claim time. Throws the database's refusal (see giftCheckoutError).
  */
-export async function checkoutGift(optionId: string, kind: GiftKind, recipientId: string | null): Promise<GiftCheckout> {
-  const { data, error } = await supabase.rpc('checkout_gift', { p_option_id: optionId, p_kind: kind, p_recipient: recipientId });
+export async function checkoutGift(optionId: string, kind: GiftKind, recipientId: string | null, choices: Record<string, string> = {}): Promise<GiftCheckout> {
+  const { data, error } = await supabase.rpc('checkout_gift', { p_option_id: optionId, p_kind: kind, p_recipient: recipientId, p_fields: choices });
   if (error) throw error;
   const d = data as { order_id?: unknown; kind?: unknown; amount?: unknown; paid?: unknown; balance?: unknown; code?: unknown } | null;
   if (!d || typeof d.order_id !== 'string') throw new Error('checkout_failed');
@@ -66,6 +66,8 @@ export type GiftCheckoutError =
   | { kind: 'self' }
   | { kind: 'recipient_not_found' }
   | { kind: 'pack_unavailable' }
+  /** A dropdown choice (e.g. the server) missing or not one of the offered ones. */
+  | { kind: 'choice' }
   | { kind: 'pending_order'; orderId: string | null }
   | { kind: 'other' };
 
@@ -76,6 +78,7 @@ export function giftCheckoutError(error: unknown): GiftCheckoutError {
   if (message.includes('cannot_gift_self')) return { kind: 'self' };
   if (message.includes('recipient_not_found')) return { kind: 'recipient_not_found' };
   if (message.includes('pack_unavailable')) return { kind: 'pack_unavailable' };
+  if (message.includes('server_required') || message.includes('gift_fields_invalid')) return { kind: 'choice' };
   if (message.includes('pending_order_exists')) {
     const id = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(`${e.details ?? ''} ${message}`)?.[0] ?? null;
     return { kind: 'pending_order', orderId: id };
