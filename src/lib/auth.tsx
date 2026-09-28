@@ -32,6 +32,8 @@ export type Profile = {
   /** True only for an account with no real chosen name yet (a Google sign-in: nothing in this app's signup form
    * runs, so there is nothing to read a display_name from). Gates the "choose a username" step -- see index.tsx. */
   needs_username: boolean;
+  /** A content creator (set by an admin): can host tournaments. */
+  is_content_creator: boolean;
 };
 
 type Account = {
@@ -48,6 +50,8 @@ type AuthContextValue = {
   balance: number | null;
   /** UI convenience only. Real enforcement is row level security in Supabase. */
   isAdmin: boolean;
+  /** Can host tournaments. UI convenience only: tournament_create checks it again. */
+  isContentCreator: boolean;
   /**
    * True until the session is known and, when signed in, the account
    * (profile + wallet) has loaded. Route decisions wait on this so an admin is
@@ -82,7 +86,7 @@ async function loadAccount(userId: string): Promise<Account> {
   const [profileRes, walletRes] = await Promise.all([
     supabase
       .from('profiles')
-      .select('id, display_name, email, avatar_url, role, language, needs_username')
+      .select('id, display_name, email, avatar_url, role, language, needs_username, is_content_creator')
       .eq('id', userId)
       .maybeSingle(),
     supabase.from('wallets').select('balance').eq('user_id', userId).maybeSingle(),
@@ -352,6 +356,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile: current?.profile ?? null,
       balance: current?.balance ?? null,
       isAdmin: current?.profile?.role === 'admin',
+      isContentCreator: current?.profile?.is_content_creator === true,
       initializing,
       signIn,
       signUp,

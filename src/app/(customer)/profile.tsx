@@ -188,6 +188,8 @@ export default function ProfileScreen() {
             <SettingsRow icon="gift" label={t('gift.menu.title')} onPress={() => router.push('/gift')} />
             {/* Redeem code: a code someone handed over becomes a gift in this Vault (app/redeem). */}
             <SettingsRow icon="key" label={t('redeem.title')} onPress={() => router.push('/redeem')} />
+            {/* Tournaments: browse and join; content creators also host (app/tournaments). */}
+            <SettingsRow icon="award" label={t('tournament.profileRow')} onPress={() => router.push('/tournaments')} />
             <SettingsMenu title={t('settings.title')} items={settingsItems} />
             <SettingsRow
               icon="globe"

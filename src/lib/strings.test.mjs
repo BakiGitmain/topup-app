@@ -25,7 +25,9 @@ describe('the two dictionaries agree', () => {
 describe('what is still English in Amharic is exactly what is listed for review', () => {
   // Legitimately identical: brand names, an example email, and similar.
   const SAME_ON_PURPOSE = new Set(['auth.emailPlaceholder', 'account.google', 'gift.email.placeholder', 'vault.gift.chosen']);
-  const stillEnglish = KEYS.filter((k) => !hasEthiopic(am[k]) && !SAME_ON_PURPOSE.has(k));
+  // Game, mode and stream-platform names are brand names, the same in both languages.
+  const brandName = (k) => /^tournament\.(game|mode)\./.test(k) || (/^tournament\.platform\./.test(k) && k !== 'tournament.platform.other') || k === 'tournament.host.streamPlaceholder';
+  const stillEnglish = KEYS.filter((k) => !hasEthiopic(am[k]) && !SAME_ON_PURPOSE.has(k) && !brandName(k));
 
   it('every English placeholder is on the review list (so none is forgotten or mistaken for a translation)', () => {
     const listed = new Set(AM_NEEDS_REVIEW);
