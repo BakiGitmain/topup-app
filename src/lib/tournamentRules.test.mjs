@@ -9,6 +9,12 @@ import {
   START_MAX_LEAD_MS,
   START_MIN_LEAD_MS,
   buildCreatePayload,
+  finishPreview,
+  pickTeam,
+  placementsOf,
+  placesToPick,
+  roomAudience,
+  roomProblem,
   clampTeamCount,
   countdown,
   detailsProblem,
@@ -263,6 +269,56 @@ describe('teams', () => {
   });
 });
 
+describe('room', () => {
+  it('needs an ID; the password is optional; 40 characters each; no line breaks', () => {
+    assert.equal(roomProblem('  ', 'x'), 'roomIdMissing');
+    assert.equal(roomProblem('123456', ''), null);
+    assert.equal(roomProblem(' 123456 ', ' pass '), null);
+    assert.equal(roomProblem('1'.repeat(41), ''), 'roomTooLong');
+    assert.equal(roomProblem('1', 'p'.repeat(41)), 'roomTooLong');
+    assert.equal(roomProblem('12\n34', ''), 'roomChars');
+    assert.equal(roomProblem('1234', 'a\tb'), 'roomChars');
+  });
+  it('who sees it: the host, anyone on a live event, registered players', () => {
+    assert.equal(roomAudience('register', true, false), 'sees');
+    assert.equal(roomAudience('live', false, false), 'sees');
+    assert.equal(roomAudience('register', false, true), 'sees');
+    assert.equal(roomAudience('register', false, false), 'not_for_you');
+  });
+});
+
+describe('picking the winners', () => {
+  it('places to fill = rewarded places that can have a team', () => {
+    assert.equal(placesToPick(3, 2), 2);
+    assert.equal(placesToPick(2, 5), 2);
+    assert.equal(placesToPick(3, 0), 0);
+  });
+  it('a team holds one place; tapping it again clears it', () => {
+    let p = pickTeam({}, 1, 'A');
+    p = pickTeam(p, 2, 'B');
+    assert.deepEqual(p, { 1: 'A', 2: 'B' });
+    p = pickTeam(p, 2, 'A');
+    assert.deepEqual(p, { 1: null, 2: 'A' });
+    assert.deepEqual(pickTeam(p, 2, 'A'), { 1: null, 2: null });
+  });
+  it('placements only once every place has a different team', () => {
+    assert.equal(placementsOf({ 1: 'A' }, 2), null);
+    assert.equal(placementsOf({ 1: 'A', 2: 'A' }, 2), null);
+    assert.deepEqual(placementsOf({ 1: 'A', 2: 'B', 3: 'C' }, 2), [{ place: 1, team_id: 'A' }, { place: 2, team_id: 'B' }]);
+    assert.deepEqual(placementsOf({}, 0), []);
+  });
+  it('the preview matches the database: money and gifts of filled places, unused places, 85% of the fees', () => {
+    const rewards = [
+      { place: 1, kind: 'money', amount: 200 }, { place: 1, kind: 'product', amount: null },
+      { place: 2, kind: 'money', amount: 50 }, { place: 2, kind: 'money', amount: 50 },
+      { place: 3, kind: 'money', amount: 30 }, { place: 3, kind: 'money', amount: 30 },
+    ];
+    assert.deepEqual(finishPreview(rewards, 2, 100), { money: 300, gifts: 1, unusedPlaces: 1, hostFees: 85 });
+    assert.equal(finishPreview([], 0, 150).hostFees, 127.5);
+    assert.equal(finishPreview([], 0, 33.33).hostFees, 28.33);
+  });
+});
+
 describe('source guards', () => {
   it('only content creators see the host button, and the host screen sends others away', () => {
     assert.match(src('../app/tournaments.tsx'), /isContentCreator && \(/);
@@ -279,6 +335,19 @@ describe('source guards', () => {
     assert.match(team, /if \(working.current\) return;/);
     assert.match(team, /teamSavePayload\(name, slots\)/);
     assert.match(team, /validateId\(check.regionId/);
+  });
+  it('ending a register tournament asks first, cannot be sent twice, and only sends complete placements', () => {
+    const finish = src('../app/tournament/finish/[id].tsx');
+    assert.match(finish, /confirmDestructive\(t\('tournament.finish.confirmTitle'\)/);
+    assert.match(finish, /if \(working.current \|\| !tn\) return;/);
+    assert.match(finish, /if \(!placements\) return setError/);
+    assert.match(finish, /finishTournament\(tn.id, placements\)/);
+  });
+  it('the room is posted once per tap and only shown by the server\'s own answer', () => {
+    assert.match(src('../components/tournament/RoomSheet.tsx'), /if \(sending.current\) return;/);
+    const card = src('../components/tournament/RoomCard.tsx');
+    assert.match(card, /const room = tn.room;/);
+    assert.doesNotMatch(card, /fetch|supabase/);
   });
   it('the app never reads the tournament tables directly (functions only)', () => {
     const lib = src('./tournaments.ts');

@@ -7,6 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FeatherIcon, type FeatherName } from '../../components/art/FeatherIcon';
 import { Avatar } from '../../components/market/Avatar';
 import { EditTournamentSheet } from '../../components/tournament/EditTournamentSheet';
+import { RoomCard } from '../../components/tournament/RoomCard';
+import { RoomSheet } from '../../components/tournament/RoomSheet';
 import { entryLabel, formatLine, gameLabel, modeLabel, placeLabel, platformLabel, whenText } from '../../components/tournament/labels';
 import { Button } from '../../components/ui/Button';
 import { ErrorBanner } from '../../components/ui/ErrorBanner';
@@ -19,8 +21,8 @@ import { formatDateTime } from '../../lib/format';
 import { useT } from '../../lib/i18n';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
 import { useToast } from '../../lib/toast';
-import { phaseOf, serverErrorOf } from '../../lib/tournamentRules';
-import { cancelTournament, fetchTournament, setReminder, type Tournament, type TournamentReward } from '../../lib/tournaments';
+import { phaseOf, roomAudience, serverErrorOf } from '../../lib/tournamentRules';
+import { cancelTournament, fetchTournament, finishTournament, setReminder, type Tournament, type TournamentReward } from '../../lib/tournaments';
 import { useAsync, useRefreshOnFocus } from '../../lib/useAsync';
 import { useNow } from '../../lib/useNow';
 
@@ -39,6 +41,8 @@ export default function TournamentScreen() {
   const [editing, setEditing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [reminding, setReminding] = useState(false);
+  const [roomOpen, setRoomOpen] = useState(false);
+  const [ending, setEnding] = useState(false);
 
   if (!initializing && !session) return <Redirect href="/sign-in" />;
 
@@ -82,6 +86,24 @@ export default function TournamentScreen() {
     }
   }
 
+  /** A live event just ends (nothing to pay). A register one goes to the winners screen instead. */
+  async function endLive() {
+    if (!tn || ending) return;
+    const sure = await confirmDestructive(t('tournament.end.liveTitle'), t('tournament.end.liveBody'), t('tournament.end.liveConfirm'), 'primary');
+    if (!sure) return;
+    setEnding(true);
+    try {
+      await finishTournament(tn.id, null);
+      toast(t('tournament.end.done'));
+    } catch (e) {
+      const code = serverErrorOf(e);
+      toast(code === 'not_started' ? t('tournament.finish.err.not_started') : code === 'tournament_closed' ? t('tournament.err.tournament_closed') : t('tournament.err.generic'));
+    } finally {
+      setEnding(false);
+      await detail.reload();
+    }
+  }
+
   if (!validId || (detail.status === 'ready' && !tn)) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -94,6 +116,8 @@ export default function TournamentScreen() {
   }
 
   const phase = tn ? phaseOf(tn.status, tn.startsAt, now) : null;
+  const on = tn?.status === 'published';
+  const seesRoom = tn ? roomAudience(tn.kind, tn.isHost, tn.myTeam?.status === 'registered') === 'sees' : false;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -183,6 +207,58 @@ export default function TournamentScreen() {
                 </View>
               )}
 
+              {/* It is over: the places (register) and the viewer's own. */}
+              {tn.status === 'finished' && (
+                <>
+                  {tn.myPlace !== null && (
+                    <View style={styles.won} testID="you-placed">
+                      <FeatherIcon name="award" size={24} color={colors.text} />
+                      <View style={styles.rowText}>
+                        <Text style={styles.wonTitle}>{t('tournament.results.youPlaced', { place: placeLabel(t, tn.myPlace) })}</Text>
+                        <Text style={styles.wonBody}>{t('tournament.results.youPlacedBody')}</Text>
+                      </View>
+                    </View>
+                  )}
+                  <Text style={styles.section}>{t('tournament.results.title')}</Text>
+                  {tn.kind === 'live' ? (
+                    <Text style={styles.note}>{t('tournament.results.liveFinished')}</Text>
+                  ) : tn.results.length === 0 ? (
+                    <Text style={styles.note}>{t('tournament.results.none')}</Text>
+                  ) : (
+                    <View style={styles.places}>
+                      {tn.results.map((r) => (
+                        <View key={r.place} style={[styles.resultRow, r.place === tn.myPlace && styles.resultMine]}>
+                          <View style={[styles.medal, r.place === 1 && styles.medalFirst, r.place === 2 && styles.medalSecond, r.place === 3 && styles.medalThird]}>
+                            <Text style={styles.medalText}>{r.place}</Text>
+                          </View>
+                          <Text style={[styles.placeTitle, styles.resultName]} numberOfLines={1}>
+                            {r.teamName}
+                          </Text>
+                          <Text style={styles.resultPlace}>{placeLabel(t, r.place)}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </>
+              )}
+
+              {/* The room: "ID ___ / Password ___" for whoever plays (or watches a live event). */}
+              {on && seesRoom && (
+                <>
+                  <RoomCard tournament={tn} />
+                  {tn.isHost && (
+                    <Button
+                      label={tn.room ? t('tournament.room.edit') : t('tournament.room.post')}
+                      icon={tn.room ? 'edit-2' : 'key'}
+                      variant={tn.room ? 'outline' : 'solid'}
+                      onPress={() => setRoomOpen(true)}
+                      style={styles.roomButton}
+                    />
+                  )}
+                </>
+              )}
+              {on && !seesRoom && tn.roomPosted && <Text style={styles.note}>{t('tournament.room.onlyPlayers')}</Text>}
+
               {tn.kind === 'live' ? (
                 <>
                   <Text style={styles.section}>{t('tournament.host.prize')}</Text>
@@ -263,6 +339,7 @@ export default function TournamentScreen() {
                 <View style={styles.hostBox}>
                   <Text style={styles.hostTitle}>{t('tournament.detail.youHost')}</Text>
                   <Button label={t('tournament.detail.edit')} icon="edit-2" variant="outline" onPress={() => setEditing(true)} />
+                  <Text style={styles.note}>{t('tournament.end.afterStart')}</Text>
                   <Pressable
                     onPress={cancel}
                     disabled={cancelling}
@@ -273,10 +350,38 @@ export default function TournamentScreen() {
                   </Pressable>
                 </View>
               )}
+
+              {/* Started: the host ends it. Register = pick the winners (every reward is paid then); live = just end it. */}
+              {tn.isHost && on && phase === 'started' && (
+                <View style={styles.hostBox}>
+                  <Text style={styles.hostTitle}>{t('tournament.detail.youHost')}</Text>
+                  {tn.kind === 'register' ? (
+                    <Button
+                      label={t('tournament.end.pickWinners')}
+                      icon="award"
+                      onPress={() => router.push({ pathname: '/tournament/finish/[id]', params: { id: tn.id } })}
+                    />
+                  ) : (
+                    <Button label={t('tournament.end.endLive')} icon="check-circle" onPress={endLive} loading={ending} />
+                  )}
+                </View>
+              )}
             </>
           )}
         </Column>
       </ScrollView>
+      {tn && tn.isHost && (
+        <RoomSheet
+          visible={roomOpen}
+          tournament={tn}
+          onClose={() => setRoomOpen(false)}
+          onPosted={() => {
+            setRoomOpen(false);
+            toast(t('tournament.room.posted'));
+            detail.reload();
+          }}
+        />
+      )}
       {tn && tn.isHost && (
         <EditTournamentSheet
           visible={editing}
@@ -398,6 +503,17 @@ const styles = StyleSheet.create({
   placeHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   medal: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.border },
   medalGold: { backgroundColor: colors.lime },
+  medalFirst: { backgroundColor: '#F6D365' },
+  medalSecond: { backgroundColor: '#DADFE3' },
+  medalThird: { backgroundColor: '#E8B48A' },
+  resultRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 2, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.surface },
+  resultName: { flexShrink: 1 },
+  resultMine: { backgroundColor: colors.limeSoft },
+  resultPlace: { marginLeft: 'auto', fontFamily: fonts.medium, fontSize: 12.5, color: colors.textMuted },
+  won: { marginTop: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md - 2, padding: spacing.md, borderRadius: radius.lg, backgroundColor: '#F6D365' },
+  wonTitle: { fontFamily: fonts.extrabold, fontSize: 17, color: colors.text },
+  wonBody: { marginTop: 2, fontFamily: fonts.medium, fontSize: 13, color: colors.text },
+  roomButton: { marginTop: spacing.sm + 2 },
   medalText: { fontFamily: fonts.extrabold, fontSize: 13, color: colors.text },
   placeTitle: { fontFamily: fonts.bold, fontSize: 15.5, color: colors.text },
   reward: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },

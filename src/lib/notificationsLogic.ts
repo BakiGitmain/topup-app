@@ -73,7 +73,18 @@ export type NotifTextKey =
   | 'notif.tournamentCancelled.title'
   | 'notif.tournamentCancelled.body'
   | 'notif.tournamentRefunded.title'
-  | 'notif.tournamentRefunded.body';
+  | 'notif.tournamentRefunded.body'
+  | 'notif.tournamentRoom.title'
+  | 'notif.tournamentRoomUpdated.title'
+  | 'notif.tournamentRoom.body'
+  | 'notif.tournamentWon.title'
+  | 'notif.tournamentWon.body'
+  | 'notif.tournamentFinished.title'
+  | 'notif.tournamentFinished.body'
+  | 'tournament.place.1'
+  | 'tournament.place.2'
+  | 'tournament.place.3'
+  | 'tournament.place.n';
 
 /** "Br 1,250" for a whole amount, "Br 30.50" otherwise. Local copy of the birr style so this file stays import-free. */
 export function notifBirr(value: unknown): string | null {
@@ -179,6 +190,28 @@ export function notificationText(
       if (tournament) return { title: t('notif.tournamentRefunded.title'), body: t('notif.tournamentRefunded.body', { tournament }) };
       break;
     }
+    case 'tournament_room_posted': {
+      const tournament = str(d.tournament_name);
+      if (tournament) {
+        return { title: t(d.updated === true ? 'notif.tournamentRoomUpdated.title' : 'notif.tournamentRoom.title'), body: t('notif.tournamentRoom.body', { tournament }) };
+      }
+      break;
+    }
+    case 'tournament_won': {
+      const tournament = str(d.tournament_name);
+      const team = str(d.team_name);
+      const place = typeof d.place === 'number' && Number.isInteger(d.place) && d.place >= 1 ? d.place : null;
+      if (tournament && team && place) {
+        const placeText = place <= 3 ? t(`tournament.place.${place}` as 'tournament.place.1') : t('tournament.place.n', { n: String(place) });
+        return { title: t('notif.tournamentWon.title'), body: t('notif.tournamentWon.body', { team, place: placeText, tournament }) };
+      }
+      break;
+    }
+    case 'tournament_finished': {
+      const tournament = str(d.tournament_name);
+      if (tournament) return { title: t('notif.tournamentFinished.title'), body: t('notif.tournamentFinished.body', { tournament }) };
+      break;
+    }
   }
   return { title: n.title, body: n.body };
 }
@@ -200,7 +233,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const uuidOf = (value: unknown) => (typeof value === 'string' && UUID.test(value) ? value : null);
 
 const MONEY_TYPES = new Set(['deposit_approved', 'refund_credited', 'commission_credited', 'withdrawal_sent']);
-const TOURNAMENT_TYPES = new Set(['tournament_team_registered', 'tournament_joined', 'tournament_starting', 'tournament_cancelled', 'tournament_entry_refunded']);
+const TOURNAMENT_TYPES = new Set(['tournament_team_registered', 'tournament_joined', 'tournament_starting', 'tournament_cancelled', 'tournament_entry_refunded',
+  'tournament_room_posted', 'tournament_won', 'tournament_finished']);
 
 /**
  * The target of a tap, or null when the notification has nothing usable to open (an old-format row, a type this
@@ -336,6 +370,9 @@ const ICON_BY_TYPE: Record<string, NotifIcon> = {
   tournament_starting: 'clock',
   tournament_cancelled: 'x',
   tournament_entry_refunded: 'rotate-ccw',
+  tournament_room_posted: 'key',
+  tournament_won: 'award',
+  tournament_finished: 'check-circle',
 };
 
 export const notificationIcon = (type: string): NotifIcon => ICON_BY_TYPE[type] ?? 'bell';

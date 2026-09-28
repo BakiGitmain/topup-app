@@ -340,6 +340,9 @@ export const SERVER_ERRORS = [
   'tournament_full',
   'payment_in_progress',
   'pending_order_exists',
+  'invalid_room',
+  'invalid_placements',
+  'not_started',
 ] as const;
 export type ServerError = (typeof SERVER_ERRORS)[number];
 
@@ -420,4 +423,84 @@ export function teamProblem(name: string, slots: readonly TeamSlot[]): TeamProbl
   if (new Set(ids).size !== ids.length) return 'duplicateGameId';
   if (!slots.every(slotVerified)) return 'teamIncomplete';
   return null;
+}
+
+// ------------------------------------------------------------------------------------------------ room
+
+/** Mirrors tournament_rooms: 1-40 characters, no line breaks or other control characters. */
+export const ROOM_MAX = 40;
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
+export type RoomProblem = 'roomIdMissing' | 'roomTooLong' | 'roomChars';
+
+/** Why the room can't be posted (the database checks the same). An empty password = the room has none. */
+export function roomProblem(roomId: string, password: string): RoomProblem | null {
+  const id = roomId.trim();
+  const pass = password.trim();
+  if (!id) return 'roomIdMissing';
+  if (id.length > ROOM_MAX || pass.length > ROOM_MAX) return 'roomTooLong';
+  if (CONTROL.test(id) || CONTROL.test(pass)) return 'roomChars';
+  return null;
+}
+
+/** Whether the signed-in person gets to see the room (the server decides; this only picks the words to show). */
+export function roomAudience(kind: TournamentKind, isHost: boolean, teamRegistered: boolean): 'sees' | 'not_for_you' {
+  return isHost || kind === 'live' || teamRegistered ? 'sees' : 'not_for_you';
+}
+
+// ------------------------------------------------------------------------------------------------ the end
+
+/** How many places the host must fill: every rewarded place that can have a team (fewer teams = fewer places). */
+export function placesToPick(places: number, teamsRegistered: number): number {
+  return Math.max(0, Math.min(places, teamsRegistered));
+}
+
+/** place -> team id (null = not picked yet). */
+export type Picks = Record<number, string | null>;
+
+/** Picks a team for a place. A team can hold one place only: picking it here frees it from any other place. */
+export function pickTeam(picks: Picks, place: number, teamId: string): Picks {
+  const next: Picks = {};
+  for (const [p, id] of Object.entries(picks)) next[Number(p)] = id === teamId ? null : id;
+  next[place] = picks[place] === teamId ? null : teamId;
+  return next;
+}
+
+/** The placements to send, once every place 1..need has a different team; otherwise null. */
+export function placementsOf(picks: Picks, need: number): { place: number; team_id: string }[] | null {
+  const out: { place: number; team_id: string }[] = [];
+  const seen = new Set<string>();
+  for (let place = 1; place <= need; place++) {
+    const id = picks[place];
+    if (!id || seen.has(id)) return null;
+    seen.add(id);
+    out.push({ place, team_id: id });
+  }
+  return out;
+}
+
+/**
+ * What ending it will do, for the host's review. `rewards`: the grid as read (money amounts; packs are counted, their
+ * price stays the host's own, already paid). `fees`: the entry fees held (registered teams).
+ */
+export function finishPreview(
+  rewards: readonly { place: number; kind: 'money' | 'product'; amount: number | null }[],
+  need: number,
+  fees: number
+): { money: number; gifts: number; unusedPlaces: number; hostFees: number } {
+  let money = 0;
+  let gifts = 0;
+  const places = new Set<number>();
+  for (const r of rewards) {
+    places.add(r.place);
+    if (r.place > need) continue;
+    if (r.kind === 'money') money += r.amount ?? 0;
+    else gifts += 1;
+  }
+  return {
+    money: Math.round(money * 100) / 100,
+    gifts,
+    unusedPlaces: [...places].filter((p) => p > need).length,
+    hostFees: Math.floor(fees * (100 - PLATFORM_CUT_PERCENT)) / 100,
+  };
 }

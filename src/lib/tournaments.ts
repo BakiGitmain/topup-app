@@ -47,6 +47,15 @@ export type Tournament = {
   teams: Team[] | null;
   /** Only on the detail read: where a player's game ID is checked for this game (null = nowhere right now). */
   idCheck: { regionId: string; fieldKey: string; fieldLabel: string } | null;
+  /** The host has posted the room (everyone gets this; only who may see it gets `room`). */
+  roomPosted: boolean;
+  /** Only on the detail read, and only for the host, a registered player, or anyone on a live event. */
+  room: { roomId: string; password: string | null; updatedAt: string } | null;
+  /** Once finished: place + team name. Empty before. */
+  results: { place: number; teamName: string }[];
+  /** The signed-in person's team's place, if it placed. */
+  myPlace: number | null;
+  finishedAt: string | null;
 };
 
 export type TeamStatus = 'draft' | 'registered' | 'cancelled';
@@ -137,6 +146,13 @@ export function toTournament(r: Row): Tournament {
             : null;
         })()
       : null,
+    roomPosted: r.room_posted === true,
+    room: r.room && typeof (r.room as Row).room_id === 'string'
+      ? { roomId: String((r.room as Row).room_id), password: str((r.room as Row).password), updatedAt: String((r.room as Row).updated_at ?? '') }
+      : null,
+    results: Array.isArray(r.results) ? (r.results as Row[]).map((x) => ({ place: Number(x.place), teamName: String(x.team_name) })) : [],
+    myPlace: num(r.my_place),
+    finishedAt: str(r.finished_at),
     rewards: Array.isArray(r.rewards)
       ? (r.rewards as Row[]).map((w) => ({
           place: Number(w.place),
@@ -237,6 +253,30 @@ export function pendingOrderOf(error: unknown): string | null {
 export async function discardTeam(teamId: string): Promise<void> {
   const { error } = await supabase.rpc('tournament_team_discard', { p_team: teamId });
   if (error) throw error;
+}
+
+/** Host: posts (or corrects) the custom room's ID and password. Empty password = the room has none. */
+export async function postRoom(id: string, roomId: string, password: string): Promise<void> {
+  const { error } = await supabase.rpc('tournament_post_room', { p_id: id, p_room_id: roomId, p_password: password });
+  if (error) throw error;
+}
+
+export type FinishResult = { paidToPlayers: number; gifts: number; feesToHost: number; returnedToHost: number };
+
+/**
+ * Host: ends it (after the start). Register: `placements` = the winning team of each rewarded place that can have one
+ * (see placesToPick); every reward is paid in the same step. Live: no placements.
+ */
+export async function finishTournament(id: string, placements: { place: number; team_id: string }[] | null): Promise<FinishResult> {
+  const { data, error } = await supabase.rpc('tournament_finish', { p_id: id, p: placements ? { placements } : {} });
+  if (error) throw error;
+  const d = (data ?? {}) as Row;
+  return {
+    paidToPlayers: Number(d.paid_to_players ?? 0),
+    gifts: Number(d.gifts ?? 0),
+    feesToHost: Number(d.fees_to_host ?? 0),
+    returnedToHost: Number(d.returned_to_host ?? 0),
+  };
 }
 
 export async function cancelTournament(id: string): Promise<void> {

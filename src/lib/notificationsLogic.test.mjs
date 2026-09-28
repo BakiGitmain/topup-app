@@ -255,6 +255,9 @@ describe('tournament notifications', () => {
       ['tournament_joined', { tournament_id: TID, tournament_name: 'Cup', team_name: 'Wolves', captain_name: 'Abel' }],
       ['tournament_starting', { tournament_id: TID, tournament_name: 'Cup' }],
       ['tournament_cancelled', { tournament_id: TID, tournament_name: 'Cup' }],
+      ['tournament_room_posted', { tournament_id: TID, tournament_name: 'Cup', updated: false }],
+      ['tournament_won', { tournament_id: TID, tournament_name: 'Cup', team_name: 'Wolves', place: 2 }],
+      ['tournament_finished', { tournament_id: TID, tournament_name: 'Cup' }],
     ]) {
       const text = notificationText({ type, title: 'x', body: 'y', data }, t);
       assert.notEqual(text.title, 'x', type);
@@ -263,6 +266,16 @@ describe('tournament notifications', () => {
       assert.notEqual(notificationIcon(type), 'bell', type);
       assert.equal(notificationAction({ type, data }, new Map())?.opens, 'notif.opens.tournament');
     }
+  });
+  it('a room update says "updated"; a win names the place in words; a bad place falls back', () => {
+    assert.match(notificationText({ type: 'tournament_room_posted', title: 'x', body: 'y', data: { tournament_name: 'Cup', updated: true } }, t).title, /tournamentRoomUpdated/);
+    assert.match(notificationText({ type: 'tournament_won', title: 'x', body: 'y', data: { tournament_name: 'Cup', team_name: 'W', place: 1 } }, t).body, /place=tournament\.place\.1\|/);
+    assert.match(notificationText({ type: 'tournament_won', title: 'x', body: 'y', data: { tournament_name: 'Cup', team_name: 'W', place: 7 } }, t).body, /place=tournament\.place\.n\|n=7/);
+    assert.deepEqual(notificationText({ type: 'tournament_won', title: 'T', body: 'B', data: { tournament_name: 'Cup', team_name: 'W', place: '1; drop' } }, t), { title: 'T', body: 'B' });
+  });
+  it('the room notice never shows a room ID or password, even if the data had one', () => {
+    const text = notificationText({ type: 'tournament_room_posted', title: 'x', body: 'y', data: { tournament_name: 'Cup', room_id: '123456', password: 'secret' } }, t);
+    assert.doesNotMatch(JSON.stringify(text), /123456|secret/);
   });
   it('missing data falls back to the stored text and opens nothing', () => {
     assert.deepEqual(notificationText({ type: 'tournament_starting', title: 'T', body: 'B', data: {} }, t), { title: 'T', body: 'B' });
