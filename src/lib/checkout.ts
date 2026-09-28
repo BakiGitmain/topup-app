@@ -77,6 +77,9 @@ export type PayOrder = {
   discount: number;
   /** A gift or redeem-code order (Profile > Gift): once paid, it leads to the gift's done screen, not the Vault. */
   giftKind: 'gift' | 'redeem_code' | null;
+  /** A tournament payment (a team's entry fee or a host's rewards): once settled it leads back to the tournament. */
+  tournamentId: string | null;
+  tournamentPurpose: 'entry' | 'rewards' | null;
 };
 
 type ItemRow = {
@@ -93,7 +96,7 @@ type ItemRow = {
 export async function fetchPayOrder(userId: string, orderId: string): Promise<PayOrder | null> {
   const { data: order, error } = await supabase
     .from('orders')
-    .select('id, status, amount, created_at, payment_provider, fulfillment, discount_amount, gift_kind, product_name, option_label')
+    .select('id, status, amount, created_at, payment_provider, fulfillment, discount_amount, gift_kind, tournament_id, tournament_purpose, product_name, option_label')
     .eq('user_id', userId)
     .eq('id', orderId)
     .maybeSingle();
@@ -116,8 +119,10 @@ export async function fetchPayOrder(userId: string, orderId: string): Promise<Pa
     fulfillment: order.fulfillment === 'code' ? 'code' : 'topup',
     discount: Number(order.discount_amount ?? 0),
     giftKind: order.gift_kind === 'gift' || order.gift_kind === 'redeem_code' ? order.gift_kind : null,
-    // A gift order is one pack with no order lines (nothing to go back into the cart): shown as its single line.
-    items: (items ?? []).length === 0 && order.gift_kind
+    tournamentId: (order.tournament_id as string | null) ?? null,
+    tournamentPurpose: order.tournament_purpose === 'entry' || order.tournament_purpose === 'rewards' ? order.tournament_purpose : null,
+    // A gift or tournament order has no order lines (nothing to go back into the cart): shown as its single line.
+    items: (items ?? []).length === 0 && (order.gift_kind || order.tournament_purpose)
       ? [{ id: order.id as string, productName: order.product_name as string, optionLabel: order.option_label as string, quantity: 1, unitPrice: Number(order.amount), lineTotal: Number(order.amount), ids: [], playerName: null }]
       : ((items ?? []) as unknown as ItemRow[]).map((i) => ({
       id: i.id,

@@ -37,8 +37,10 @@ export type Tournament = {
   teamsRegistered: number;
   /** The signed-in person asked to be reminded. */
   reminded: boolean;
-  /** Their own team here, if any. */
-  myTeam: { id: string; name: string; status: TeamStatus; isCaptain: boolean } | null;
+  /** Their own team here, if any. `paymentOrderId`: the captain's entry payment that is still open (Telebirr/CBE). */
+  myTeam: { id: string; name: string; status: TeamStatus; isCaptain: boolean; paymentOrderId: string | null } | null;
+  /** Host only, while the rewards payment is still open (the tournament is 'pending_payment'). */
+  paymentOrderId: string | null;
   /** Only on the detail read. */
   rewards: TournamentReward[] | null;
   /** Only on the detail read: registered teams (game IDs only for the host). */
@@ -122,9 +124,10 @@ export function toTournament(r: Row): Tournament {
     myTeam: r.my_team
       ? (() => {
           const m = r.my_team as Row;
-          return { id: String(m.id), name: String(m.name), status: m.status as TeamStatus, isCaptain: m.is_captain === true };
+          return { id: String(m.id), name: String(m.name), status: m.status as TeamStatus, isCaptain: m.is_captain === true, paymentOrderId: str(m.payment_order_id) };
         })()
       : null,
+    paymentOrderId: str(r.payment_order_id),
     teams: Array.isArray(r.teams) ? (r.teams as Row[]).map(toTeam) : null,
     idCheck: r.id_check
       ? (() => {
@@ -163,11 +166,16 @@ export async function fetchTournament(id: string): Promise<Tournament | null> {
   return data ? toTournament(data as Row) : null;
 }
 
-/** Publishes it. Returns the new id. Throws the server's refusal (see serverErrorOf). */
-export async function createTournament(payload: CreatePayload): Promise<string> {
+/**
+ * Creates it. A live tournament (or a register one whose rewards the wallet covers) is published at once: `paid`.
+ * Otherwise it waits for the rewards payment: open `orderId` in the normal pay screen (Telebirr / CBE). Throws the
+ * server's refusal (see serverErrorOf).
+ */
+export async function createTournament(payload: CreatePayload): Promise<{ id: string; paid: boolean; orderId: string | null }> {
   const { data, error } = await supabase.rpc('tournament_create', { p: payload });
   if (error) throw error;
-  return String(data);
+  const d = (data ?? {}) as Row;
+  return { id: String(d.id), paid: d.paid === true, orderId: str(d.order_id) };
 }
 
 export async function updateTournament(
@@ -200,12 +208,30 @@ export async function saveTeam(
   return String(data);
 }
 
-/** Pays the entry fee (if any) from the wallet and takes a spot. */
-export async function registerTeam(teamId: string): Promise<{ balance: number | null }> {
+export type RegisterResult =
+  /** Registered (free, paid from the wallet, or already registered). */
+  | { status: 'registered' }
+  /** The fee must be paid by Telebirr / CBE: open this order in the pay screen. */
+  | { status: 'awaiting_payment'; orderId: string }
+  /** Paid, but the last spot went meanwhile: the fee went straight back to the wallet. */
+  | { status: 'refunded' };
+
+/** Takes a spot: free at once; a fee from the wallet if it covers it, otherwise through the pay screen. */
+export async function registerTeam(teamId: string): Promise<RegisterResult> {
   const { data, error } = await supabase.rpc('tournament_team_register', { p_team: teamId });
   if (error) throw error;
   const d = (data ?? {}) as Row;
-  return { balance: d.balance === undefined || d.balance === null ? null : Number(d.balance) };
+  const orderId = str(d.order_id);
+  if (d.status === 'awaiting_payment' && orderId) return { status: 'awaiting_payment', orderId };
+  if (d.status === 'refunded') return { status: 'refunded' };
+  return { status: 'registered' };
+}
+
+/** The id of the customer's unpaid order a checkout was refused for (`pending_order_exists`), if that is the error. */
+export function pendingOrderOf(error: unknown): string | null {
+  const e = error as { message?: unknown; details?: unknown } | null;
+  if (typeof e?.message !== 'string' || !e.message.includes('pending_order_exists')) return null;
+  return typeof e.details === 'string' && /^[0-9a-f-]{36}$/i.test(e.details) ? e.details : null;
 }
 
 export async function discardTeam(teamId: string): Promise<void> {

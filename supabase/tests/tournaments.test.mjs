@@ -51,7 +51,7 @@ const base = (over = {}) => ({
   entry_fee: 50, starts_at: soon(24 * 60), stream_platform: 'tiktok', stream_url: 'https://www.tiktok.com/@streamer',
   rewards: moneyRewards(3, 4), ...over,
 });
-const create = (uid, p) => rows('authenticated', uid, `select tournament_create($1::jsonb) id`, [JSON.stringify(p)]).then((r) => r[0].id);
+const create = (uid, p) => rows('authenticated', uid, `select tournament_create($1::jsonb) ->> 'id' id`, [JSON.stringify(p)]).then((r) => r[0].id);
 const bad = (n, p, re, uid = HOST) => rejects(n, 'authenticated', uid, `select tournament_create($1::jsonb)`, re, [JSON.stringify(p)]);
 
 console.log('\n-- games and modes');

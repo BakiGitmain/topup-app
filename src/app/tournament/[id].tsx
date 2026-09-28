@@ -244,6 +244,21 @@ export default function TournamentScreen() {
                 </>
               )}
 
+              {/* The host's tournament is waiting for its rewards payment: only they see it until it is confirmed. */}
+              {tn.isHost && phase === 'unpaid' && (
+                <View style={styles.hostBox}>
+                  <Text style={styles.hostTitle}>{t('tournament.phase.unpaid')}</Text>
+                  <Text style={styles.note}>{t('tournament.detail.awaitingPayment')}</Text>
+                  {tn.paymentOrderId && (
+                    <Button
+                      label={t('tournament.detail.finishPayment')}
+                      icon="credit-card"
+                      onPress={() => router.push({ pathname: '/pay/[id]', params: { id: tn.paymentOrderId! } })}
+                    />
+                  )}
+                </View>
+              )}
+
               {tn.isHost && phase === 'upcoming' && (
                 <View style={styles.hostBox}>
                   <Text style={styles.hostTitle}>{t('tournament.detail.youHost')}</Text>
@@ -282,6 +297,11 @@ export default function TournamentScreen() {
 function RegisterAction({ tournament: tn }: { tournament: Tournament }) {
   const t = useT();
   const open = () => router.push({ pathname: '/tournament/team/[id]', params: { id: tn.id } });
+  // The entry fee is being paid by Telebirr / CBE: finish that first (the team registers when it is confirmed).
+  if (tn.myTeam?.paymentOrderId) {
+    const orderId = tn.myTeam.paymentOrderId;
+    return <Button label={t('tournament.detail.finishPayment')} icon="credit-card" onPress={() => router.push({ pathname: '/pay/[id]', params: { id: orderId } })} />;
+  }
   if (tn.myTeam && tn.myTeam.status === 'registered') {
     return (
       <Pressable onPress={open} accessibilityRole="button" style={({ pressed }) => [styles.myTeam, pressed && styles.pressed]}>

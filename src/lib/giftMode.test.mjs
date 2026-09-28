@@ -52,8 +52,8 @@ describe('the rules that live in screens', () => {
     assert.match(src('../components/product/ActionBar.tsx'), /\{!giftLabel && \(/, 'no add-to-cart while gifting');
   });
   it('the admin queue and its badge never list a gift or redeem-code order', () => {
-    assert.match(admin, /supabase\.from\('orders'\)\.select\(QUEUE_COLUMNS\)\.is\('gift_kind', null\)/);
-    assert.match(admin, /\.is\('gift_kind', null\)\s*\.in\('status', \['pending', 'paid'\]\)/);
+    assert.match(admin, /supabase\.from\('orders'\)\.select\(QUEUE_COLUMNS\)\.is\('gift_kind', null\)\.is\('tournament_purpose', null\)/);
+    assert.match(admin, /\.is\('gift_kind', null\)\s*\.is\('tournament_purpose', null\)\s*\.in\('status', \['pending', 'paid'\]\)/);
   });
   it('the gift flow reuses the real shop catalog, not a second product browser', () => {
     assert.match(shop, /export function ShopCatalog\(\{ gift \}: \{ gift\?: GiftTarget \}\)/);

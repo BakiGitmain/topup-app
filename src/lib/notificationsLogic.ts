@@ -71,7 +71,9 @@ export type NotifTextKey =
   | 'notif.tournamentStarting.title'
   | 'notif.tournamentStarting.body'
   | 'notif.tournamentCancelled.title'
-  | 'notif.tournamentCancelled.body';
+  | 'notif.tournamentCancelled.body'
+  | 'notif.tournamentRefunded.title'
+  | 'notif.tournamentRefunded.body';
 
 /** "Br 1,250" for a whole amount, "Br 30.50" otherwise. Local copy of the birr style so this file stays import-free. */
 export function notifBirr(value: unknown): string | null {
@@ -172,6 +174,11 @@ export function notificationText(
       if (tournament) return { title: t('notif.tournamentCancelled.title'), body: t('notif.tournamentCancelled.body', { tournament }) };
       break;
     }
+    case 'tournament_entry_refunded': {
+      const tournament = str(d.tournament_name);
+      if (tournament) return { title: t('notif.tournamentRefunded.title'), body: t('notif.tournamentRefunded.body', { tournament }) };
+      break;
+    }
   }
   return { title: n.title, body: n.body };
 }
@@ -193,7 +200,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const uuidOf = (value: unknown) => (typeof value === 'string' && UUID.test(value) ? value : null);
 
 const MONEY_TYPES = new Set(['deposit_approved', 'refund_credited', 'commission_credited', 'withdrawal_sent']);
-const TOURNAMENT_TYPES = new Set(['tournament_team_registered', 'tournament_joined', 'tournament_starting', 'tournament_cancelled']);
+const TOURNAMENT_TYPES = new Set(['tournament_team_registered', 'tournament_joined', 'tournament_starting', 'tournament_cancelled', 'tournament_entry_refunded']);
 
 /**
  * The target of a tap, or null when the notification has nothing usable to open (an old-format row, a type this
@@ -328,6 +335,7 @@ const ICON_BY_TYPE: Record<string, NotifIcon> = {
   tournament_joined: 'award',
   tournament_starting: 'clock',
   tournament_cancelled: 'x',
+  tournament_entry_refunded: 'rotate-ccw',
 };
 
 export const notificationIcon = (type: string): NotifIcon => ICON_BY_TYPE[type] ?? 'bell';

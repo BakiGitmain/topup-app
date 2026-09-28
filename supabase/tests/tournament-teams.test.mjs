@@ -47,7 +47,7 @@ const R = (await one(`insert into product_regions (product_id, code, label, is_a
 const PACK = (await one(`insert into product_options (product_id, region_id, label, price, is_active) values ($1,$2,'100 Diamonds',150,true) returning id`, [P, R])).id;
 
 const soon = (mins) => new Date(Date.now() + mins * 60_000).toISOString();
-const create = (p) => rows('authenticated', HOST, `select tournament_create($1::jsonb) id`, [JSON.stringify(p)]).then((r) => r[0].id);
+const create = (p) => rows('authenticated', HOST, `select tournament_create($1::jsonb) ->> 'id' id`, [JSON.stringify(p)]).then((r) => r[0].id);
 const reg = (over = {}) => ({
   kind: 'register', game: 'free_fire', mode: 'clash_squad', name: 'Squad Cup', team_size: 3, team_count: 2, entry_fee: 40,
   starts_at: soon(24 * 60), stream_platform: null, stream_url: null,
@@ -65,16 +65,33 @@ const saveBad = (n, uid, t, p, re) => rejects(n, 'authenticated', uid, `select t
 const inbox = (uid, type) => rows('postgres', null, `select type, title, body, data from notifications where user_id = $1 and type = $2 order by created_at`, [uid, type]);
 
 console.log('\n-- the host pays for register rewards when publishing');
-await rejects('with an empty wallet, publishing is refused (and nothing is created)', 'authenticated', HOST, `select tournament_create($1::jsonb)`, /insufficient_balance/, [JSON.stringify(reg())]);
-ok('...really nothing', Number((await one(`select count(*) n from tournaments`)).n) === 0);
+const unfunded = (await rows('authenticated', HOST, `select tournament_create($1::jsonb) r`, [JSON.stringify(reg({ name: 'Unfunded Cup' }))]))[0].r;
+ok('with an empty wallet, the tournament waits for a bank transfer (not published, nothing taken)', unfunded.paid === false && unfunded.status === 'pending_payment' && typeof unfunded.order_id === 'string');
+ok('...its rewards order is for exactly the rewards (Br 350)', Number((await one(`select amount from orders where id = $1`, [unfunded.order_id])).amount) === 350);
+ok('...and nobody else can see it yet', (await rows('authenticated', FAN, `select tournament_detail($1) d`, [unfunded.id]))[0].d === null
+  && !(await rows('authenticated', FAN, `select tournament_list('open') l`))[0].l.some((x) => x.id === unfunded.id));
+await rows('authenticated', HOST, `select cancel_pending_order($1)`, [unfunded.order_id]);
+ok('cancelling that payment cancels the waiting tournament', (await one(`select status from tournaments where id = $1`, [unfunded.id])).status === 'cancelled');
 await fund(HOST, 1000);
 const T = await create(reg());
 ok('published: Br 100 + 100 + the pack\'s Br 150 = Br 350 taken from the host', (await balance(HOST)) === 650);
 ok('...held on the tournament', Number((await one(`select reward_hold from tournaments where id = $1`, [T])).reward_hold) === 350);
 const tx = await one(`select kind, amount from wallet_transactions where user_id = $1 order by created_at desc limit 1`, [HOST]);
-ok('...as one wallet line, kind tournament', tx.kind === 'tournament' && Number(tx.amount) === -350);
+ok('...paid through its order, like any checkout (one wallet line)', tx.kind === 'purchase' && Number(tx.amount) === -350);
+ok('...and that order is settled (completed), so nothing can refund it twice', (await one(`select status from orders where tournament_id = $1 and tournament_purpose = 'rewards'`, [T])).status === 'completed');
 ok('the pack reward remembers what was paid for it', Number((await one(`select price_paid from tournament_rewards where tournament_id = $1 and kind = 'product'`, [T])).price_paid) === 150);
 await rejects('the hold can never be changed afterwards', 'postgres', null, `update tournaments set reward_hold = 0 where id = '${T}'`, /tournament_locked/);
+const big = (await rows('authenticated', HOST, `select tournament_create($1::jsonb) r`, [JSON.stringify(reg({ name: 'Bank Cup', rewards: [
+  { place: 1, slot: 1, kind: 'money', amount: 1000 }, { place: 1, slot: 2, kind: 'money', amount: 1000 }, { place: 1, slot: 3, kind: 'money', amount: 1000 }] }))]))[0].r;
+ok('rewards bigger than the wallet (Br 3000 > Br 650): waiting for a bank transfer', big.paid === false && big.status === 'pending_payment');
+await rows('service_role', null, `select begin_payment_verification($1, $2, 'telebirr', 'TBTEST0100')`, [big.order_id, HOST]);
+await rows('service_role', null, `select finish_payment_verification($1, 'paid', 3000, 'live', 200, '{}'::jsonb)`, [big.order_id]);
+ok('ShegerPay verifies Br 3000: published at once, the Br 3000 held for the winners', (await one(`select status, reward_hold from tournaments where id = $1`, [big.id])).status === 'published'
+  && (await balance(HOST)) === 650);
+ok('...visible to everyone now', (await rows('authenticated', FAN, `select tournament_detail($1) d`, [big.id]))[0].d?.rewards_funded === true);
+await rows('authenticated', HOST, `select tournament_cancel($1)`, [big.id]);
+ok('cancelling it gives the Br 3000 back to the host\'s wallet', (await balance(HOST)) === 3650);
+await as('authenticated', ADM, `select admin_adjust_balance($1, -3000, 'test: take back')`, [HOST]);
 
 console.log('\n-- live: prize text, no reward grid, nothing paid');
 const liveBase = { kind: 'live', game: 'pubg_mobile', mode: 'tdm', name: 'Live TDM', team_size: 4, starts_at: soon(60), stream_platform: 'tiktok', stream_url: 'https://tiktok.com/@s', prize_text: '600 UC to the winners' };
@@ -130,14 +147,27 @@ const v3 = await checked(CAP, '3333333333', 'ChalaFF');
 const full = { name: 'Wolves', members: [{ slot: 1, game_id: '1111111111', validation_id: vCap }, { slot: 2, user_id: P2, game_id: '2222222222', validation_id: v2 }, { slot: 3, user_id: P3, game_id: '3333333333', validation_id: v3 }] };
 await save(CAP, T, full);
 await rejects('someone else cannot register my team', 'authenticated', P2, `select tournament_team_register($1)`, /team_not_found/, [TEAM]);
-await rejects('without Br 40 for the entry fee: refused, nothing registered', 'authenticated', CAP, `select tournament_team_register($1)`, /insufficient_balance/, [TEAM]);
-ok('...still a draft', (await one(`select status from tournament_teams where id = $1`, [TEAM])).status === 'draft');
+const r0 = (await rows('authenticated', CAP, `select tournament_team_register($1) r`, [TEAM]))[0].r;
+const entry = await one(`select amount, status, tournament_purpose, tournament_team_id from orders where id = $1`, [r0.order_id]);
+ok('the wallet can\'t cover Br 40: an entry order waits for Telebirr / CBE', r0.status === 'awaiting_payment' && Number(entry.amount) === 40 && entry.status === 'pending_payment' && entry.tournament_purpose === 'entry' && entry.tournament_team_id === TEAM);
+ok('...the team is still a draft (nothing registered until the money is verified)', (await one(`select status from tournament_teams where id = $1`, [TEAM])).status === 'draft');
+ok('tapping Register again reopens the same payment', (await rows('authenticated', CAP, `select tournament_team_register($1) r`, [TEAM]))[0].r.order_id === r0.order_id);
+await saveBad('while it is being paid for, the roster cannot change', CAP, T, full, /payment_in_progress/);
+await rejects('...nor can the draft be thrown away', 'authenticated', CAP, `select tournament_team_discard($1)`, /payment_in_progress/, [TEAM]);
+// The bank transfer, exactly as the verify-payment Edge Function runs it (service role): claim, ShegerPay, record.
+const begin = (await rows('service_role', null, `select begin_payment_verification($1, $2, 'telebirr', 'TBTEST0001') r`, [r0.order_id, CAP]))[0].r;
+ok('verify-payment can claim the transfer for this order, for exactly Br 40', begin.result === 'go' && Number(begin.amount) === 40);
+const fin = (await rows('service_role', null, `select finish_payment_verification($1, 'paid', 40, 'test', 200, '{}'::jsonb) r`, [r0.order_id]))[0].r;
+ok('ShegerPay says paid: the order is paid', fin.result === 'paid');
+ok('...and in the same moment the team is registered, with the Br 40 held on it', (await one(`select status, fee_paid, fee_order_id from tournament_teams where id = $1`, [TEAM])).status === 'registered'
+  && Number((await one(`select fee_paid from tournament_teams where id = $1`, [TEAM])).fee_paid) === 40);
+ok('...the order is settled (completed): delivery never touches it', (await one(`select status from orders where id = $1`, [r0.order_id])).status === 'completed');
+ok('...and no wallet money moved (it came from the bank)', (await balance(CAP)) === 0);
+await rejects('an admin cannot fail or refund a settled tournament order (it would pay twice)', 'authenticated', ADM, `select admin_set_order_status($1, 'refunded')`, /tournament_order_locked/, [r0.order_id]);
+await rejects('...nor move it at all', 'postgres', null, `update orders set status = 'processing' where id = '${r0.order_id}'`, /tournament_order_locked/);
 await fund(CAP, 100);
-const r1 = (await rows('authenticated', CAP, `select tournament_team_register($1) r`, [TEAM]))[0].r;
-ok('registered: the fee (Br 40) is taken once, from the captain only', r1.status === 'registered' && (await balance(CAP)) === 60 && (await balance(P2)) === 0);
-ok('...and held on the team', Number((await one(`select fee_paid from tournament_teams where id = $1`, [TEAM])).fee_paid) === 40);
 const again = (await rows('authenticated', CAP, `select tournament_team_register($1) r`, [TEAM]))[0].r;
-ok('a double tap registers once and charges once', again.already === true && (await balance(CAP)) === 60);
+ok('a double tap after it registered changes nothing and charges nothing', again.already === true && (await balance(CAP)) === 100);
 await rejects('a registered roster is fixed', 'authenticated', CAP, `select tournament_team_save($1, $2::jsonb)`, /team_locked/, [T, JSON.stringify(full)]);
 await rejects('...even for the database owner', 'postgres', null, `update tournament_team_members set game_id = '5555555555' where team_id = '${TEAM}' and slot = 2`, /team_locked/);
 await rejects('...and a registered team cannot be thrown away', 'authenticated', CAP, `select tournament_team_discard($1)`, /team_not_found/, [TEAM]);
@@ -165,15 +195,26 @@ await saveBad('someone already registered in another team cannot be added', CAP2
 await saveBad('a team name already taken (any case)', CAP2, T, { name: 'WOLVES', members: [] }, /team_name_taken/);
 const vF = await checked(CAP2, '8888888888', 'FanFF');
 const TEAM2 = await save(CAP2, T, { name: 'Lions', members: [{ slot: 1, game_id: '6666666666', validation_id: vQ }, { slot: 2, user_id: Q2, game_id: '7777777777', validation_id: vQ2 }, { slot: 3, user_id: FAN, game_id: '8888888888', validation_id: vF }] });
-await fund(CAP2, 40);
-await rows('authenticated', CAP2, `select tournament_team_register($1)`, [TEAM2]);
-ok('the second (last) team registers', (await detail(FAN, T)).teams_registered === 2);
+// A third team starts a bank payment while the last spot is still free...
 const P4 = await mkUser('p4@x.com', 'G'), P5 = await mkUser('p5@x.com', 'H'), P6 = await mkUser('p6@x.com', 'I');
 const w1 = await checked(P4, '1212121212', 'x'), w2 = await checked(P4, '1313131313', 'y'), w3 = await checked(P4, '1414141414', 'z');
 const TEAM3 = await save(P4, T, { name: 'Late', members: [{ slot: 1, game_id: '1212121212', validation_id: w1 }, { slot: 2, user_id: P5, game_id: '1313131313', validation_id: w2 }, { slot: 3, user_id: P6, game_id: '1414141414', validation_id: w3 }] });
-await fund(P4, 40);
+const late = (await rows('authenticated', P4, `select tournament_team_register($1) r`, [TEAM3]))[0].r;
+ok('a team with no wallet money gets a bank payment to make', late.status === 'awaiting_payment');
+// ...then another team takes that spot from its wallet first.
+await fund(CAP2, 40);
+await rows('authenticated', CAP2, `select tournament_team_register($1)`, [TEAM2]);
+ok('the second (last) team registers', (await detail(FAN, T)).teams_registered === 2);
+await rows('service_role', null, `select begin_payment_verification($1, $2, 'cbe', 'FTTEST0002')`, [late.order_id, P4]);
+await rows('service_role', null, `select finish_payment_verification($1, 'paid', 40, 'test', 200, '{}'::jsonb)`, [late.order_id]);
+ok('the late transfer is verified but the tournament is full: the Br 40 goes straight to the captain\'s wallet', (await balance(P4)) === 40);
+ok('...the order reads refunded, the team stays a draft', (await one(`select status from orders where id = $1`, [late.order_id])).status === 'refunded'
+  && (await one(`select status from tournament_teams where id = $1`, [TEAM3])).status === 'draft');
+const back = await one(`select note from wallet_transactions where user_id = $1 order by created_at desc limit 1`, [P4]);
+ok('...labelled as test-key money (a ShegerPay test key paid it)', back.note.startsWith('[TEST KEY] Entry fee returned'), back.note);
+ok('...and the captain is told why', (await inbox(P4, 'tournament_entry_refunded')).length === 1 && (await detail(FAN, T)).teams_registered === 2);
 await rejects('a third team: the tournament is full (2 teams)', 'authenticated', P4, `select tournament_team_register($1)`, /tournament_full/, [TEAM3]);
-ok('...and was charged nothing', (await balance(P4)) === 40);
+ok('...and was charged nothing more', (await balance(P4)) === 40);
 await rows('authenticated', P4, `select tournament_team_discard($1)`, [TEAM3]);
 ok('a draft can be thrown away', Number((await one(`select count(*) n from tournament_teams where id = $1`, [TEAM3])).n) === 0);
 await rejects('a registered player cannot delete their account before it is played', 'postgres', null, `delete from profiles where id = '${P2}'`, /player_has_upcoming_tournaments/);

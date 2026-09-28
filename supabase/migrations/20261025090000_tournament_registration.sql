@@ -221,7 +221,9 @@ revoke all on function public._tournament_notify(uuid, text, text, text, jsonb) 
 
 -- As in 20261024090000, with: a live tournament takes prize_text and NO rewards; a register tournament's rewards are
 -- paid for now (wallet 'tournament', held on the tournament). Extra error: invalid_prize, insufficient_balance.
-create or replace function public.tournament_create(p jsonb)
+-- (Its return type changes in 20261026090000; dropped first so replaying every migration in order still works.)
+drop function if exists public.tournament_create(jsonb);
+create function public.tournament_create(p jsonb)
 returns uuid language plpgsql security definer set search_path = public as $$
 declare
   v_uid     uuid := auth.uid();

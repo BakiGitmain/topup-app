@@ -58,7 +58,8 @@ function toQueueOrder(row: QueueRow): QueueOrder {
 export async function fetchQueue(filter: QueueFilter): Promise<QueueOrder[]> {
   // Never a gift or redeem-code order (orders.gift_kind): those are delivered only when the gift is claimed, never
   // worked by hand, and the database refuses to move them anyway. Order search below still finds them.
-  const base = supabase.from('orders').select(QUEUE_COLUMNS).is('gift_kind', null);
+  // Gift and tournament payments are never delivered by an admin (a tournament payment settles itself when paid).
+  const base = supabase.from('orders').select(QUEUE_COLUMNS).is('gift_kind', null).is('tournament_purpose', null);
   const request =
     // 'paid' (bank transfer or instant wallet payment) is an equally valid, un-worked-on order, same as 'pending'
     // (the older direct-purchase path's default status) -- both show here, admin_deliver_order accepts either.
@@ -135,6 +136,7 @@ export async function fetchPendingCount(): Promise<number> {
     .from('orders')
     .select('id', { count: 'exact', head: true })
     .is('gift_kind', null)
+    .is('tournament_purpose', null)
     .in('status', ['pending', 'paid']);
   if (error) throw error;
   return count ?? 0;

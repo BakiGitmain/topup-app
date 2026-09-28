@@ -148,8 +148,11 @@ export default function PayScreen() {
       if (userId) await clearPendingOrderId(userId);
       await cart.reload();
       toast(t('pay.cancelled'));
-      // A gift order had no cart lines to put back: return to the gift menu instead.
-      router.replace(data?.giftKind ? '/gift' : '/cart');
+      // A gift order had no cart lines to put back: return to the gift menu instead. A tournament payment goes back to
+      // its tournament (a host's waiting tournament is cancelled with its payment, so to the list).
+      if (data?.tournamentPurpose === 'entry' && data.tournamentId) router.replace({ pathname: '/tournament/[id]', params: { id: data.tournamentId } });
+      else if (data?.tournamentPurpose) router.replace('/tournaments');
+      else router.replace(data?.giftKind ? '/gift' : '/cart');
     } catch {
       setMessage(t('pay.cancelFailed'));
     } finally {
@@ -197,11 +200,21 @@ export default function PayScreen() {
                   <Text style={styles.successDetailLine}>{`${t('order.number')} ${shortOrderId(data.id)}`}</Text>
                 </View>
               }
-              action={data.giftKind ? t('pay.viewGift') : data.fulfillment === 'code' ? t('pay.viewVault') : t('pay.viewOrders')}
+              action={
+                data.tournamentId
+                  ? t('tournament.pay.open')
+                  : data.giftKind
+                    ? t('pay.viewGift')
+                    : data.fulfillment === 'code'
+                      ? t('pay.viewVault')
+                      : t('pay.viewOrders')
+              }
               onAction={() =>
-                data.giftKind
-                  ? router.replace({ pathname: '/gift/done/[id]', params: { id } })
-                  : router.replace(data.fulfillment === 'code' ? '/vault' : '/orders')
+                data.tournamentId
+                  ? router.replace({ pathname: '/tournament/[id]', params: { id: data.tournamentId } })
+                  : data.giftKind
+                    ? router.replace({ pathname: '/gift/done/[id]', params: { id } })
+                    : router.replace(data.fulfillment === 'code' ? '/vault' : '/orders')
               }
               secondaryAction={t('pay.viewReceipt')}
               onSecondaryAction={() => router.push({ pathname: '/order/[id]', params: { id } })}
@@ -221,7 +234,19 @@ export default function PayScreen() {
 
           {/* Genuinely done and NOT successful: cancelled, failed, refunded, or any other settled status this
               screen doesn't have a specific case for. Distinct from the success branch above on purpose. */}
-          {data && settled && !isPaymentSuccess(data.status) && data.status !== 'payment_mismatch' && (
+          {/* A tournament payment that was verified but couldn't be used (full / too late): it went to the wallet. */}
+          {data && data.tournamentPurpose && data.status === 'refunded' && (
+            <Outcome
+              icon="alert-triangle"
+              tone="warn"
+              title={t('pay.title')}
+              body={t('tournament.pay.refunded')}
+              action={t('tournament.pay.open')}
+              onAction={() => router.replace(data.tournamentId ? { pathname: '/tournament/[id]', params: { id: data.tournamentId } } : '/tournaments')}
+            />
+          )}
+
+          {data && settled && !isPaymentSuccess(data.status) && data.status !== 'payment_mismatch' && !(data.tournamentPurpose && data.status === 'refunded') && (
             <Outcome icon="clock" tone="warn" title={t('pay.title')} body={t('pay.closed')} action={t('pay.viewOrders')} onAction={() => router.replace('/orders')} />
           )}
 

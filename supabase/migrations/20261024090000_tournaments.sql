@@ -233,7 +233,9 @@ revoke all on function public._tournament_check_stream(text, text, boolean) from
 -- Errors: not_authenticated, not_a_creator, invalid_kind, invalid_game_mode, invalid_name, invalid_team_size,
 --   invalid_team_count, invalid_entry_fee, invalid_start, invalid_stream, invalid_rewards, reward_pack_unavailable,
 --   too_many_tournaments.
-create or replace function public.tournament_create(p jsonb)
+-- (Its return type changes in 20261026090000; dropped first so replaying every migration in order still works.)
+drop function if exists public.tournament_create(jsonb);
+create function public.tournament_create(p jsonb)
 returns uuid language plpgsql security definer set search_path = public as $$
 declare
   v_uid     uuid := auth.uid();

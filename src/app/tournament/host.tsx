@@ -54,7 +54,7 @@ import {
   type Reward,
   type TournamentKind,
 } from '../../lib/tournamentRules';
-import { createTournament, fetchRewardPacks } from '../../lib/tournaments';
+import { createTournament, fetchRewardPacks, pendingOrderOf } from '../../lib/tournaments';
 import { useAsync } from '../../lib/useAsync';
 import { useNow } from '../../lib/useNow';
 
@@ -93,6 +93,8 @@ export default function HostTournamentScreen() {
   const [problem, setProblem] = useState<StringKey | null>(null);
   const [editing, setEditing] = useState<{ place: number; slot: number } | null>(null);
   const [publishing, setPublishing] = useState(false);
+  // The customer's own unpaid order that blocked publishing (one unpaid order at a time, like every checkout).
+  const [pendingOrder, setPendingOrder] = useState<string | null>(null);
   const publishingRef = useRef(false);
   const packs = useAsync(fetchRewardPacks, 'packs', !!session && isContentCreator);
 
@@ -176,12 +178,21 @@ export default function HostTournamentScreen() {
     publishingRef.current = true;
     setPublishing(true);
     try {
-      const id = await createTournament(built.payload);
-      toast(t('tournament.host.published'));
-      router.replace({ pathname: '/tournament/[id]', params: { id } });
+      const created = await createTournament(built.payload);
+      if (created.paid || !created.orderId) {
+        refreshAccount();
+        toast(t('tournament.host.published'));
+        router.replace({ pathname: '/tournament/[id]', params: { id: created.id } });
+      } else {
+        // The wallet didn't cover the rewards: pay them with Telebirr / CBE on the normal pay screen. The tournament
+        // is published the moment that payment is verified.
+        router.replace({ pathname: '/pay/[id]', params: { id: created.orderId } });
+      }
     } catch (e) {
       const code = serverErrorOf(e);
-      setProblem((code && SERVER_MESSAGES[code]) || 'tournament.err.generic');
+      const pending = pendingOrderOf(e);
+      setPendingOrder(pending);
+      setProblem(code === 'pending_order_exists' ? 'tournament.err.pendingOrder' : (code && SERVER_MESSAGES[code]) || 'tournament.err.generic');
     } finally {
       publishingRef.current = false;
       setPublishing(false);
@@ -374,19 +385,23 @@ export default function HostTournamentScreen() {
                 <ReviewLine icon="award" text={form.kind === 'live' ? form.prize.trim() : totalsText(t, totals)} />
               </View>
               {form.kind === 'register' && (
-                <View style={[styles.payBox, short && styles.payBoxShort]}>
+                <View style={styles.payBox}>
                   <Text style={styles.payTitle}>{t('tournament.host.payNow', { amount: formatBirr(dueNow) })}</Text>
                   <Text style={styles.payBody}>{t('tournament.host.payNote')}</Text>
-                  <Text style={[styles.payBalance, short && styles.payBalanceShort]}>
+                  <Text style={styles.payBalance}>
                     {t('tournament.host.yourBalance', { amount: balance === null ? '—' : formatBirr(balance) })}
                   </Text>
-                  {short && <Button label={t('common.topUp')} variant="dark" onPress={() => router.push('/wallet')} style={styles.topUp} />}
+                  {/* Short: nothing is refused any more -- the same Telebirr / CBE screen as any checkout opens next. */}
+                  <Text style={styles.payBody}>{short ? t('tournament.host.payByBank') : t('tournament.host.payByWallet')}</Text>
                 </View>
               )}
             </>
           )}
 
           {problem && <View style={styles.problem}><ErrorBanner message={t(problem)} /></View>}
+          {problem === 'tournament.err.pendingOrder' && pendingOrder && (
+            <Button label={t('tournament.openPayment')} variant="dark" onPress={() => router.push({ pathname: '/pay/[id]', params: { id: pendingOrder } })} />
+          )}
 
           <View style={styles.nav}>
             {step > 0 && <Button label={t('tournament.host.back')} variant="outline" onPress={back} style={styles.navButton} />}
@@ -501,12 +516,9 @@ const styles = StyleSheet.create({
   problem: { marginTop: spacing.md },
   prizeBox: { height: 96, alignItems: 'flex-start', paddingTop: spacing.sm },
   payBox: { marginTop: spacing.md, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.limeSoft, gap: 4 },
-  payBoxShort: { backgroundColor: colors.dangerBg },
   payTitle: { fontFamily: fonts.extrabold, fontSize: 17, color: colors.text },
   payBody: { fontFamily: fonts.regular, fontSize: 13, lineHeight: 19, color: colors.textMuted },
   payBalance: { marginTop: 4, fontFamily: fonts.semibold, fontSize: 13.5, color: colors.limeDark },
-  payBalanceShort: { color: colors.danger },
-  topUp: { marginTop: spacing.sm },
   nav: { flexDirection: 'row', gap: spacing.sm + 2, marginTop: spacing.lg },
   navButton: { flex: 1 },
 });

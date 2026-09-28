@@ -29,7 +29,7 @@ import {
   teamSavePayload,
   type TeamSlot,
 } from '../../../lib/tournamentRules';
-import { discardTeam, fetchMyTeam, fetchTournament, registerTeam, saveTeam, type Team, type Tournament } from '../../../lib/tournaments';
+import { discardTeam, fetchMyTeam, fetchTournament, pendingOrderOf, registerTeam, saveTeam, type Team, type Tournament } from '../../../lib/tournaments';
 import { useAsync } from '../../../lib/useAsync';
 import { useNow } from '../../../lib/useNow';
 import { validateId } from '../../../lib/validateId';
@@ -53,6 +53,7 @@ const SERVER_MESSAGES: Record<string, StringKey> = {
   duplicate_game_id: 'tournament.team.err.duplicateGameId',
   team_incomplete: 'tournament.team.err.teamIncomplete',
   team_locked: 'tournament.team.err.tournament_closed',
+  payment_in_progress: 'tournament.team.paying',
 };
 
 /**
@@ -162,6 +163,7 @@ function TeamEditor({
   const [problem, setProblem] = useState<StringKey | null>(null);
   const [saving, setSaving] = useState<'save' | 'register' | 'discard' | null>(null);
   const [teamId, setTeamId] = useState<string | null>(draft?.id ?? null);
+  const [pendingOrder, setPendingOrder] = useState<string | null>(null);
   const working = useRef(false);
   const now = useNow();
 
@@ -270,12 +272,26 @@ function TeamEditor({
     setSaving('register');
     try {
       const saved = await persist();
-      await registerTeam(saved);
+      const result = await registerTeam(saved);
       refreshAccount();
-      toast(t('tournament.team.registered'));
-      router.replace({ pathname: '/tournament/[id]', params: { id: tournament.id } });
+      if (result.status === 'awaiting_payment') {
+        // The wallet doesn't cover the fee: the same Telebirr / CBE pay screen as any checkout. The team is registered
+        // the moment ShegerPay confirms the transfer.
+        router.replace({ pathname: '/pay/[id]', params: { id: result.orderId } });
+      } else if (result.status === 'refunded') {
+        setProblem('tournament.team.err.tournament_full');
+      } else {
+        toast(t('tournament.team.registered'));
+        router.replace({ pathname: '/tournament/[id]', params: { id: tournament.id } });
+      }
     } catch (e) {
-      failed(e);
+      const pending = pendingOrderOf(e);
+      if (pending) {
+        setPendingOrder(pending);
+        setProblem('tournament.err.pendingOrder');
+      } else {
+        failed(e);
+      }
     } finally {
       working.current = false;
       setSaving(null);
@@ -302,6 +318,8 @@ function TeamEditor({
   const fee = tournament.entryFee;
   const short = fee > 0 && balance !== null && balance < fee;
   const blocked = closed || full || !check;
+  // This team's entry payment is already open (Telebirr / CBE started): only finishing it makes sense now.
+  const paying = tournament.myTeam?.isCaptain ? tournament.myTeam.paymentOrderId : null;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -404,22 +422,30 @@ function TeamEditor({
           })}
 
           {problem && <ErrorBanner message={t(problem)} />}
-          {short && !blocked && (
-            <View style={styles.shortBox}>
-              <Text style={styles.shortText}>{t('tournament.team.err.insufficient_balance')}</Text>
-              <Button label={t('common.topUp')} variant="dark" onPress={() => router.push('/wallet')} />
-            </View>
+          {problem === 'tournament.err.pendingOrder' && pendingOrder && (
+            <Button label={t('tournament.openPayment')} variant="dark" onPress={() => router.push({ pathname: '/pay/[id]', params: { id: pendingOrder } })} style={styles.secondary} />
+          )}
+          {/* A payment for this team is already open: finish it (the roster is locked meanwhile). */}
+          {paying && <Text style={styles.payNote}>{t('tournament.team.paying')}</Text>}
+          {!paying && fee > 0 && !blocked && (
+            <Text style={styles.payNote}>{short ? t('tournament.team.payByBank') : t('tournament.team.payByWallet')}</Text>
           )}
 
-          <Button
-            label={fee > 0 ? t('tournament.team.registerPay', { amount: formatBirr(fee) }) : t('tournament.team.register')}
-            onPress={register}
-            loading={saving === 'register'}
-            disabled={blocked || saving !== null}
-            style={styles.primary}
-          />
-          <Button label={t('tournament.team.save')} variant="outline" onPress={saveDraft} loading={saving === 'save'} disabled={blocked || saving !== null} style={styles.secondary} />
-          {teamId && (
+          {paying ? (
+            <Button label={t('tournament.openPayment')} onPress={() => router.push({ pathname: '/pay/[id]', params: { id: paying } })} style={styles.primary} />
+          ) : (
+            <>
+              <Button
+                label={fee > 0 ? t('tournament.team.registerPay', { amount: formatBirr(fee) }) : t('tournament.team.register')}
+                onPress={register}
+                loading={saving === 'register'}
+                disabled={blocked || saving !== null}
+                style={styles.primary}
+              />
+              <Button label={t('tournament.team.save')} variant="outline" onPress={saveDraft} loading={saving === 'save'} disabled={blocked || saving !== null} style={styles.secondary} />
+            </>
+          )}
+          {teamId && !paying && (
             <Pressable onPress={discard} disabled={saving !== null} accessibilityRole="button" style={({ pressed }) => [styles.discard, pressed && styles.pressed]}>
               {saving === 'discard' ? <ActivityIndicator color={colors.danger} /> : <Text style={styles.discardText}>{t('tournament.team.discard')}</Text>}
             </Pressable>
@@ -489,8 +515,7 @@ const styles = StyleSheet.create({
   noteGood: { marginTop: -spacing.sm, marginBottom: spacing.sm, fontFamily: fonts.semibold, fontSize: 13, color: colors.limeInk },
   noteBad: { marginTop: -spacing.sm, marginBottom: spacing.sm, fontFamily: fonts.medium, fontSize: 13, color: colors.danger },
 
-  shortBox: { padding: spacing.md, marginBottom: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.dangerBg, gap: spacing.sm },
-  shortText: { fontFamily: fonts.medium, fontSize: 13.5, color: colors.danger },
+  payNote: { marginTop: spacing.xs, fontFamily: fonts.regular, fontSize: 13, lineHeight: 19, color: colors.textMuted, textAlign: 'center' },
   primary: { marginTop: spacing.sm },
   secondary: { marginTop: spacing.sm },
   discard: { marginTop: spacing.sm, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill },

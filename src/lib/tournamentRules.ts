@@ -283,13 +283,15 @@ export function hostShareOfFee(fee: number): number {
 
 // ------------------------------------------------------------------------------------------------ reading
 
-export type TournamentStatus = 'published' | 'cancelled' | 'finished';
+/** 'pending_payment' = a register tournament whose rewards are still being paid by bank transfer (host only). */
+export type TournamentStatus = 'pending_payment' | 'published' | 'cancelled' | 'finished';
 /** What a list row / the detail screen says about where a tournament is. */
-export type Phase = 'upcoming' | 'started' | 'cancelled' | 'finished';
+export type Phase = 'unpaid' | 'upcoming' | 'started' | 'cancelled' | 'finished';
 
 export function phaseOf(status: TournamentStatus, startsAt: string, now: number): Phase {
   if (status === 'cancelled') return 'cancelled';
   if (status === 'finished') return 'finished';
+  if (status === 'pending_payment') return 'unpaid';
   return new Date(startsAt).getTime() > now ? 'upcoming' : 'started';
 }
 
@@ -336,6 +338,8 @@ export const SERVER_ERRORS = [
   'team_not_found',
   'team_incomplete',
   'tournament_full',
+  'payment_in_progress',
+  'pending_order_exists',
 ] as const;
 export type ServerError = (typeof SERVER_ERRORS)[number];
 
