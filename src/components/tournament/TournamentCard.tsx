@@ -15,7 +15,8 @@ export function TournamentCard({ tournament: tn, now, onPress }: Props) {
   const t = useT();
   const phase = phaseOf(tn.status, tn.startsAt, now);
   const closed = phase === 'cancelled' || phase === 'finished';
-  const prize = prizeText(t, tn.firstPlace.money, tn.firstPlace.products);
+  // Live: the host's own words; register: what first place wins (paid for up front).
+  const prize = tn.kind === 'live' ? (tn.prizeText ?? '') : prizeText(t, tn.firstPlace.money, tn.firstPlace.products);
 
   return (
     <Pressable
@@ -45,7 +46,10 @@ export function TournamentCard({ tournament: tn, now, onPress }: Props) {
 
       <View style={styles.meta}>
         <Meta icon="calendar" text={formatDateTime(tn.startsAt)} />
-        <Meta icon="users" text={formatLine(t, tn.teamSize, tn.teamCount)} />
+        <Meta
+          icon="users"
+          text={tn.teamCount !== null ? t('tournament.detail.spots', { n: tn.teamsRegistered, total: tn.teamCount }) : formatLine(t, tn.teamSize, tn.teamCount)}
+        />
         {tn.kind === 'register' ? <Meta icon="tag" text={entryLabel(t, tn.entryFee)} /> : <Meta icon="radio" text={t('tournament.kind.live')} />}
       </View>
 
@@ -53,7 +57,7 @@ export function TournamentCard({ tournament: tn, now, onPress }: Props) {
         <View style={styles.prize}>
           <FeatherIcon name="award" size={15} color={colors.limeInk} />
           <Text style={styles.prizeText} numberOfLines={1}>
-            {t('tournament.firstPlace', { prize })}
+            {tn.kind === 'live' ? prize : t('tournament.firstPlace', { prize })}
           </Text>
         </View>
       ) : null}

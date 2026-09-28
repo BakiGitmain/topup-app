@@ -39,6 +39,7 @@ const TX_ICONS: Record<TransactionKind, FeatherName> = {
   withdrawal: 'arrow-up-right',
   portal_coin_redemption: 'star',
   commission: 'tag',
+  tournament: 'award',
 };
 
 const LANGUAGES: { id: Language; label: string }[] = [

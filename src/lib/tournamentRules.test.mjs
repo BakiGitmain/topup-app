@@ -26,7 +26,11 @@ import {
   rewardTotals,
   serverErrorOf,
   setReward,
+  slotVerified,
   streamPlatformOf,
+  teamProblem,
+  teamSavePayload,
+  emptySlots,
 } from './tournamentRules.ts';
 
 const src = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8');
@@ -159,6 +163,7 @@ describe('the form', () => {
       starts_at: new Date(NOW + 24 * 3600_000).toISOString(),
       stream_platform: 'tiktok',
       stream_url: 'https://tiktok.com/@streamer',
+      prize_text: null,
       rewards: [
         { place: 1, slot: 1, kind: 'money', amount: 100 },
         { place: 1, slot: 2, kind: 'money', amount: 100 },
@@ -169,9 +174,12 @@ describe('the form', () => {
   });
   it('free = fee 0 whatever was typed; live = no team count, no fee', () => {
     assert.equal(buildCreatePayload(goodForm({ paid: false, fee: 'junk' }), NOW).payload.entry_fee, 0);
-    const live = buildCreatePayload(goodForm({ kind: 'live', paid: true, fee: '50' }), NOW).payload;
+    const live = buildCreatePayload(goodForm({ kind: 'live', paid: true, fee: '50', prize: ' 600 UC ' }), NOW).payload;
     assert.equal(live.team_count, null);
     assert.equal(live.entry_fee, 0);
+    // A live tournament's prize is text; it has no reward grid and nothing is paid for it.
+    assert.equal(live.prize_text, '600 UC');
+    assert.deepEqual(live.rewards, []);
   });
   it('each problem is named', () => {
     const p = (over) => detailsProblem(goodForm(over), NOW);
@@ -187,6 +195,9 @@ describe('the form', () => {
     assert.equal(p({ startsAt: new Date(NOW + 91 * 86_400_000) }), 'startTooFar');
     assert.equal(p({ streamUrl: 'http://x.com' }), 'streamInvalid');
     assert.equal(p({ kind: 'live', streamUrl: '' }), 'streamRequired');
+    assert.equal(p({ kind: 'live', prize: ' x ' }), 'prize');
+    assert.equal(p({ kind: 'live', prize: 'Winner gets 500 diamonds' }), null);
+    assert.equal(buildCreatePayload(goodForm({ kind: 'live', prize: 'ok prize', rewards: [[null]] }), NOW).ok, true);
     assert.equal(p({ streamUrl: '' }), null);
     assert.equal(buildCreatePayload(goodForm({ rewards: [[money(1), null, null, null]] }), NOW).problem, 'rewards');
     assert.equal(buildCreatePayload(goodForm({ rewards: [[money(1)]] }), NOW).problem, 'rewards');
@@ -218,6 +229,40 @@ describe('reading', () => {
   });
 });
 
+describe('teams', () => {
+  const CAP = { id: 'c1', name: 'Abel', avatarUrl: null };
+  const done = (slot, userId, gameId) => ({ slot, userId, name: 'x', avatarUrl: null, gameId, validationId: `v${slot}`, checkedGameId: gameId, playerName: 'P' });
+  it('slot 1 is the captain; the rest start empty', () => {
+    const s = emptySlots(3, CAP);
+    assert.equal(s.length, 3);
+    assert.equal(s[0].userId, 'c1');
+    assert.equal(s[1].userId, null);
+  });
+  it('a slot counts as checked only while the typed ID is the one that was checked', () => {
+    assert.equal(slotVerified(done(2, 'u2', '123')), true);
+    assert.equal(slotVerified({ ...done(2, 'u2', '123'), gameId: '124' }), false);
+    assert.equal(slotVerified({ ...done(2, null, '123') }), false);
+  });
+  it('the draft sends only people and checked IDs (never an unchecked ID)', () => {
+    const slots = [done(1, 'c1', '111'), { ...done(2, 'u2', '222'), gameId: '999' }, { ...emptySlots(3, CAP)[2] }];
+    assert.deepEqual(teamSavePayload('  Wolves ', slots), {
+      name: 'Wolves',
+      members: [
+        { slot: 1, user_id: null, game_id: '111', validation_id: 'v1' },
+        { slot: 2, user_id: 'u2', game_id: null, validation_id: null },
+      ],
+    });
+  });
+  it('Register is possible only with a name, every player and every ID checked, no repeats', () => {
+    const full = [done(1, 'c1', '111'), done(2, 'u2', '222')];
+    assert.equal(teamProblem('Wolves', full), null);
+    assert.equal(teamProblem('W', full), 'teamName');
+    assert.equal(teamProblem('Wolves', [full[0], { ...full[1], gameId: '' }]), 'teamIncomplete');
+    assert.equal(teamProblem('Wolves', [full[0], done(2, 'c1', '222')]), 'duplicatePlayer');
+    assert.equal(teamProblem('Wolves', [full[0], done(2, 'u2', '111')]), 'duplicateGameId');
+  });
+});
+
 describe('source guards', () => {
   it('only content creators see the host button, and the host screen sends others away', () => {
     assert.match(src('../app/tournaments.tsx'), /isContentCreator && \(/);
@@ -225,8 +270,15 @@ describe('source guards', () => {
   });
   it('publishing asks first and cannot be sent twice', () => {
     const host = src('../app/tournament/host.tsx');
-    assert.match(host, /confirmDestructive\(t\('tournament.host.publishTitle'\)/);
+    assert.match(host, /confirmDestructive\(\s*t\('tournament.host.publishTitle'\)/);
     assert.match(host, /if \(publishingRef.current\) return;/);
+  });
+  it('registering a team asks first, cannot be sent twice, and only sends checked IDs', () => {
+    const team = src('../app/tournament/team/[id].tsx');
+    assert.match(team, /confirmDestructive\(\s*t\('tournament.team.confirmTitle'\)/);
+    assert.match(team, /if \(working.current\) return;/);
+    assert.match(team, /teamSavePayload\(name, slots\)/);
+    assert.match(team, /validateId\(check.regionId/);
   });
   it('the app never reads the tournament tables directly (functions only)', () => {
     const lib = src('./tournaments.ts');

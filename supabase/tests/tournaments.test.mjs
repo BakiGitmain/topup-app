@@ -35,6 +35,8 @@ for (const m of MIGRATIONS) await db.exec(m); // re-runnable
 const mkUser = async (email, name) => (await one(`insert into auth.users (email, raw_user_meta_data) values ($1, $2::jsonb) returning id`, [email, JSON.stringify({ display_name: name })])).id;
 const HOST = await mkUser('host.private@x.com', 'Streamer'), FAN = await mkUser('fan@x.com', 'Fan'), ADM = await mkUser('admin@x.com', 'Boss');
 await db.exec(`update profiles set is_content_creator = true where id = '${HOST}'; update profiles set role = 'admin' where id = '${ADM}'`);
+// A register tournament's rewards are paid for at publish (20261025090000): give the host plenty.
+await as('authenticated', ADM, `select admin_adjust_balance($1, 900000, 'test funds')`, [HOST]);
 
 const P = (await one(`insert into products (slug, name, category, is_active) values ('ff','Free Fire','games',true) returning id`)).id;
 const R = (await one(`insert into product_regions (product_id, code, label, is_active) values ($1,'mena','MENA',true) returning id`, [P])).id;
@@ -115,7 +117,7 @@ const prod = await one(`select * from tournament_rewards where tournament_id = $
 ok('a product reward keeps a snapshot of the pack (name, pack, region)', prod.product_name === 'Free Fire' && prod.option_label === '100 Diamonds' && prod.region_label === 'MENA' && prod.option_id === PACK);
 
 console.log('\n-- live tournaments');
-const live = { kind: 'live', game: 'pubg_mobile', mode: 'tdm', name: 'Live TDM', team_size: 4, starts_at: soon(60), stream_platform: 'youtube', stream_url: 'https://youtube.com/@s', rewards: moneyRewards(2, 4) };
+const live = { kind: 'live', game: 'pubg_mobile', mode: 'tdm', name: 'Live TDM', team_size: 4, starts_at: soon(60), stream_platform: 'youtube', stream_url: 'https://youtube.com/@s', prize_text: '1,000 diamonds to the winning squad' };
 const L1 = await create(HOST, live);
 const l1 = await one(`select * from tournaments where id = $1`, [L1]);
 ok('a live tournament: no team count, no fee', l1.kind === 'live' && l1.team_count === null && Number(l1.entry_fee) === 0);

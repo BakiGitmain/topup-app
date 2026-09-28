@@ -7,6 +7,8 @@ import { colors, fonts, spacing } from '../../lib/theme';
 import {
   NAME_MAX,
   NAME_MIN,
+  PRIZE_MAX,
+  PRIZE_MIN,
   START_MAX_LEAD_MS,
   START_MIN_LEAD_MS,
   normalizeStreamUrl,
@@ -31,17 +33,19 @@ export function EditTournamentSheet({ visible, tournament, onClose, onSaved }: P
   const [name, setName] = useState(tournament.name);
   const [startsAt, setStartsAt] = useState<Date | null>(new Date(tournament.startsAt));
   const [stream, setStream] = useState(tournament.streamUrl ?? '');
+  const [prize, setPrize] = useState(tournament.prizeText ?? '');
   const [error, setError] = useState<StringKey | null>(null);
   const [saving, setSaving] = useState(false);
   // Reset the form each time the sheet opens on fresh data.
   const [openedFor, setOpenedFor] = useState<string | null>(null);
-  const openKey = visible ? `${tournament.id}|${tournament.name}|${tournament.startsAt}|${tournament.streamUrl}` : null;
+  const openKey = visible ? `${tournament.id}|${tournament.name}|${tournament.startsAt}|${tournament.streamUrl}|${tournament.prizeText}` : null;
   if (openKey !== openedFor) {
     setOpenedFor(openKey);
     if (openKey) {
       setName(tournament.name);
       setStartsAt(new Date(tournament.startsAt));
       setStream(tournament.streamUrl ?? '');
+      setPrize(tournament.prizeText ?? '');
       setError(null);
     }
   }
@@ -66,6 +70,11 @@ export function EditTournamentSheet({ visible, tournament, onClose, onSaved }: P
       changes.stream_url = url ?? '';
       changes.stream_platform = url ? streamPlatformOf(url) : '';
     }
+    if (tournament.kind === 'live') {
+      const p = prize.trim();
+      if (p.length < PRIZE_MIN || p.length > PRIZE_MAX) return setError('tournament.err.prize');
+      if (p !== tournament.prizeText) changes.prize_text = p;
+    }
     if (Object.keys(changes).length === 0) return onClose();
 
     setError(null);
@@ -80,6 +89,7 @@ export function EditTournamentSheet({ visible, tournament, onClose, onSaved }: P
         invalid_start: 'tournament.err.startTooSoon',
         invalid_stream: 'tournament.err.streamInvalid',
         tournament_closed: 'tournament.err.tournament_closed',
+        invalid_prize: 'tournament.err.prize',
       };
       setError((code && map[code]) || 'tournament.err.generic');
     } finally {
@@ -111,6 +121,9 @@ export function EditTournamentSheet({ visible, tournament, onClose, onSaved }: P
         keyboardType="url"
       />
       {url ? <Text style={styles.detected}>{t('tournament.host.streamDetected', { platform: platformLabel(t, streamPlatformOf(url)) })}</Text> : null}
+      {tournament.kind === 'live' && (
+        <TextField label={t('tournament.host.prize')} value={prize} onChangeText={setPrize} maxLength={PRIZE_MAX} multiline boxStyle={styles.prizeBox} />
+      )}
       <Button label={t('tournament.reward.save')} onPress={save} loading={saving} style={styles.save} />
     </BottomSheet>
   );
@@ -120,4 +133,5 @@ const styles = StyleSheet.create({
   note: { marginBottom: spacing.md, fontFamily: fonts.regular, fontSize: 13.5, lineHeight: 19, color: colors.textMuted },
   detected: { marginTop: -spacing.sm, marginBottom: spacing.md, fontFamily: fonts.medium, fontSize: 13, color: colors.limeInk },
   save: { marginTop: spacing.sm },
+  prizeBox: { height: 96, alignItems: 'flex-start', paddingTop: spacing.sm },
 });

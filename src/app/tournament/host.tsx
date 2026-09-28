@@ -26,6 +26,7 @@ import {
   GAMES,
   MAX_FEE,
   MIN_TEAMS,
+  PRIZE_MAX,
   NAME_MAX,
   START_MAX_LEAD_MS,
   START_MIN_LEAD_MS,
@@ -57,7 +58,12 @@ import { createTournament, fetchRewardPacks } from '../../lib/tournaments';
 import { useAsync } from '../../lib/useAsync';
 import { useNow } from '../../lib/useNow';
 
-const STEPS = 5;
+type StepName = 'game' | 'kind' | 'details' | 'rewards' | 'review';
+/** A live tournament has no reward grid (its prize is text on the details step), so it has one step less. */
+const REGISTER_STEPS: StepName[] = ['game', 'kind', 'details', 'rewards', 'review'];
+const LIVE_STEPS: StepName[] = ['game', 'kind', 'details', 'review'];
+/** The time a button press happens (read in handlers only, never while rendering). */
+const nowMs = () => Date.now();
 const SERVER_MESSAGES: Record<string, StringKey> = {
   not_a_creator: 'tournament.err.not_a_creator',
   invalid_game_mode: 'tournament.err.mode',
@@ -69,17 +75,21 @@ const SERVER_MESSAGES: Record<string, StringKey> = {
   invalid_stream: 'tournament.err.streamInvalid',
   invalid_rewards: 'tournament.err.rewards',
   reward_pack_unavailable: 'tournament.err.reward_pack_unavailable',
+  invalid_prize: 'tournament.err.prize',
+  insufficient_balance: 'tournament.err.insufficient_balance',
   too_many_tournaments: 'tournament.err.too_many_tournaments',
 };
 
 /** Profile > Tournaments > Host a tournament: five short steps, then publish. Content creators only. */
 export default function HostTournamentScreen() {
-  const { session, initializing, isContentCreator } = useAuth();
+  const { session, initializing, isContentCreator, balance, refreshAccount } = useAuth();
   const t = useT();
   const clock = useNow(60_000);
   const toast = useToast();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<HostForm>(emptyHostForm);
+  const steps = form.kind === 'live' ? LIVE_STEPS : REGISTER_STEPS;
+  const current: StepName = steps[Math.min(step, steps.length - 1)];
   const [problem, setProblem] = useState<StringKey | null>(null);
   const [editing, setEditing] = useState<{ place: number; slot: number } | null>(null);
   const [publishing, setPublishing] = useState(false);
@@ -128,13 +138,14 @@ export default function HostTournamentScreen() {
 
   function next() {
     const now = Date.now();
-    if (step === 2) {
+    if (current === 'details') {
       const p = detailsProblem(form, now);
       if (p) return setProblem(problemKey(p));
     }
-    if (step === 3 && !gridComplete(form.rewards)) return setProblem('tournament.err.rewards');
+    if (current === 'rewards' && !gridComplete(form.rewards)) return setProblem('tournament.err.rewards');
     setProblem(null);
-    setStep((s) => Math.min(s + 1, STEPS - 1));
+    if (current === 'review' || current === 'rewards' || current === 'details') refreshAccount();
+    setStep((s) => Math.min(s + 1, steps.length - 1));
   }
 
   function back() {
@@ -147,13 +158,20 @@ export default function HostTournamentScreen() {
 
   async function publish() {
     if (publishingRef.current) return;
-    const built = buildCreatePayload(form, Date.now());
+    const built = buildCreatePayload(form, nowMs());
     if (!built.ok) {
       setProblem(problemKey(built.problem));
-      setStep(built.problem === 'rewards' ? 3 : built.problem === 'game' ? 0 : built.problem === 'kind' ? 1 : 2);
+      setStep(steps.indexOf(built.problem === 'rewards' ? 'rewards' : built.problem === 'game' ? 'game' : built.problem === 'kind' ? 'kind' : 'details'));
       return;
     }
-    const sure = await confirmDestructive(t('tournament.host.publishTitle'), t('tournament.host.publishBody'), t('tournament.host.publish'), 'primary');
+    const sure = await confirmDestructive(
+      t('tournament.host.publishTitle'),
+      form.kind === 'register'
+        ? `${t('tournament.host.payNow', { amount: formatBirr(dueNow) })} ${t('tournament.host.publishBody')}`
+        : t('tournament.host.publishBody'),
+      form.kind === 'register' ? t('tournament.host.payAndPublish') : t('tournament.host.publish'),
+      'primary'
+    );
     if (!sure) return;
     publishingRef.current = true;
     setPublishing(true);
@@ -171,6 +189,9 @@ export default function HostTournamentScreen() {
   }
 
   const totals = rewardTotals(form.rewards);
+  // What publishing takes from the wallet now (register only): every money reward + each product at today's price.
+  const dueNow = form.kind === 'register' ? Math.round((totals.money + totals.productsPrice) * 100) / 100 : 0;
+  const short = form.kind === 'register' && balance !== null && balance < dueNow;
   const url = normalizeStreamUrl(form.streamUrl);
   const fee = parseBirr(form.fee, { max: MAX_FEE });
   const placesMax = form.kind ? maxPlaces(form.kind, form.teamCount) : 1;
@@ -181,13 +202,13 @@ export default function HostTournamentScreen() {
         <Column>
           <ScreenHeader title={t('tournament.host.title')} onBack={back} />
           <View style={styles.progress}>
-            {Array.from({ length: STEPS }, (_, i) => (
+            {steps.map((_, i) => (
               <View key={i} style={[styles.dot, i <= step && styles.dotOn]} />
             ))}
           </View>
-          <Text style={styles.stepText}>{t('tournament.host.step', { n: step + 1, total: STEPS })}</Text>
+          <Text style={styles.stepText}>{t('tournament.host.step', { n: step + 1, total: steps.length })}</Text>
 
-          {step === 0 && (
+          {current === 'game' && (
             <>
               <Text style={styles.title}>{t('tournament.host.gameTitle')}</Text>
               {GAMES.map((g) => (
@@ -203,7 +224,7 @@ export default function HostTournamentScreen() {
             </>
           )}
 
-          {step === 1 && (
+          {current === 'kind' && (
             <>
               <Text style={styles.title}>{t('tournament.host.kindTitle')}</Text>
               <Choice icon="users" title={t('tournament.kind.register')} body={t('tournament.host.kind.registerBody')} selected={form.kind === 'register'} onPress={() => chooseKind('register')} />
@@ -211,7 +232,7 @@ export default function HostTournamentScreen() {
             </>
           )}
 
-          {step === 2 && mode && form.kind && (
+          {current === 'details' && mode && form.kind && (
             <>
               <Text style={styles.title}>{t('tournament.host.detailsTitle')}</Text>
               <TextField
@@ -285,10 +306,21 @@ export default function HostTournamentScreen() {
                 keyboardType="url"
               />
               {url ? <Text style={styles.hint}>{t('tournament.host.streamDetected', { platform: platformLabel(t, streamPlatformOf(url)) })}</Text> : null}
+              {form.kind === 'live' && (
+                <TextField
+                  label={t('tournament.host.prize')}
+                  value={form.prize}
+                  onChangeText={(prize) => update({ prize })}
+                  placeholder={t('tournament.host.prizePlaceholder')}
+                  maxLength={PRIZE_MAX}
+                  multiline
+                  boxStyle={styles.prizeBox}
+                />
+              )}
             </>
           )}
 
-          {step === 3 && (
+          {current === 'rewards' && (
             <>
               <Text style={styles.title}>{t('tournament.host.rewardsTitle')}</Text>
               <Text style={styles.lead}>{t('tournament.host.rewardsBody')}</Text>
@@ -329,7 +361,7 @@ export default function HostTournamentScreen() {
             </>
           )}
 
-          {step === 4 && form.game && form.kind && (
+          {current === 'review' && form.game && form.kind && (
             <>
               <Text style={styles.title}>{t('tournament.host.reviewTitle')}</Text>
               <View style={styles.review}>
@@ -339,8 +371,18 @@ export default function HostTournamentScreen() {
                 <ReviewLine icon="users" text={formatLine(t, form.teamSize, form.kind === 'register' ? form.teamCount : null)} />
                 {form.kind === 'register' && <ReviewLine icon="tag" text={entryLabel(t, form.paid && fee ? fee : 0)} />}
                 {url && <ReviewLine icon="video" text={`${platformLabel(t, streamPlatformOf(url))} · ${url}`} />}
-                <ReviewLine icon="award" text={totalsText(t, totals)} />
+                <ReviewLine icon="award" text={form.kind === 'live' ? form.prize.trim() : totalsText(t, totals)} />
               </View>
+              {form.kind === 'register' && (
+                <View style={[styles.payBox, short && styles.payBoxShort]}>
+                  <Text style={styles.payTitle}>{t('tournament.host.payNow', { amount: formatBirr(dueNow) })}</Text>
+                  <Text style={styles.payBody}>{t('tournament.host.payNote')}</Text>
+                  <Text style={[styles.payBalance, short && styles.payBalanceShort]}>
+                    {t('tournament.host.yourBalance', { amount: balance === null ? '—' : formatBirr(balance) })}
+                  </Text>
+                  {short && <Button label={t('common.topUp')} variant="dark" onPress={() => router.push('/wallet')} style={styles.topUp} />}
+                </View>
+              )}
             </>
           )}
 
@@ -348,8 +390,8 @@ export default function HostTournamentScreen() {
 
           <View style={styles.nav}>
             {step > 0 && <Button label={t('tournament.host.back')} variant="outline" onPress={back} style={styles.navButton} />}
-            {step >= 2 && step < STEPS - 1 && <Button label={t('tournament.host.next')} onPress={next} style={styles.navButton} />}
-            {step === STEPS - 1 && <Button label={t('tournament.host.publish')} onPress={publish} loading={publishing} style={styles.navButton} />}
+            {step >= 2 && current !== 'review' && <Button label={t('tournament.host.next')} onPress={next} style={styles.navButton} />}
+            {current === 'review' && <Button label={form.kind === 'register' ? t('tournament.host.payAndPublish') : t('tournament.host.publish')} onPress={publish} loading={publishing} style={styles.navButton} />}
           </View>
         </Column>
       </ScrollView>
@@ -457,6 +499,14 @@ const styles = StyleSheet.create({
   reviewText: { flex: 1, fontFamily: fonts.medium, fontSize: 14, lineHeight: 20, color: colors.text },
 
   problem: { marginTop: spacing.md },
+  prizeBox: { height: 96, alignItems: 'flex-start', paddingTop: spacing.sm },
+  payBox: { marginTop: spacing.md, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.limeSoft, gap: 4 },
+  payBoxShort: { backgroundColor: colors.dangerBg },
+  payTitle: { fontFamily: fonts.extrabold, fontSize: 17, color: colors.text },
+  payBody: { fontFamily: fonts.regular, fontSize: 13, lineHeight: 19, color: colors.textMuted },
+  payBalance: { marginTop: 4, fontFamily: fonts.semibold, fontSize: 13.5, color: colors.limeDark },
+  payBalanceShort: { color: colors.danger },
+  topUp: { marginTop: spacing.sm },
   nav: { flexDirection: 'row', gap: spacing.sm + 2, marginTop: spacing.lg },
   navButton: { flex: 1 },
 });

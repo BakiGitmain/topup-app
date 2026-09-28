@@ -92,6 +92,8 @@ export function NotificationPanel({ visible, onClose, openedAt }: Props) {
       router.navigate({ pathname: '/vault', params: { filter: target.filter, hl } });
     } else if (target?.kind === 'order') {
       router.push({ pathname: '/order/[id]', params: { id: target.orderId } });
+    } else if (target?.kind === 'tournament') {
+      router.push({ pathname: '/tournament/[id]', params: { id: target.tournamentId } });
     }
   }
 

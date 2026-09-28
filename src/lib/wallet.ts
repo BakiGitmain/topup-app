@@ -7,7 +7,7 @@ import { parseWalletFailure, type DepositStatus, type WalletErrorCode, type With
 // reads the balance and the ledger and asks those functions to act; it never writes either, and the Telegram side is
 // entirely server-side (the app never knows the bot exists).
 
-export type TransactionKind = 'deposit' | 'purchase' | 'refund' | 'adjustment' | 'withdrawal' | 'portal_coin_redemption' | 'commission';
+export type TransactionKind = 'deposit' | 'purchase' | 'refund' | 'adjustment' | 'withdrawal' | 'portal_coin_redemption' | 'commission' | 'tournament';
 
 export type Transaction = {
   id: string;

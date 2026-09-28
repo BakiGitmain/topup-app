@@ -30,9 +30,66 @@ export type Tournament = {
   host: { name: string; avatarUrl: string | null };
   firstPlace: { money: number; products: number };
   places: number;
+  /** Live: what the winner gets, in the host's words. */
+  prizeText: string | null;
+  /** Register: the host has paid for the rewards (held until the winners are paid). */
+  rewardsFunded: boolean;
+  teamsRegistered: number;
+  /** The signed-in person asked to be reminded. */
+  reminded: boolean;
+  /** Their own team here, if any. */
+  myTeam: { id: string; name: string; status: TeamStatus; isCaptain: boolean } | null;
   /** Only on the detail read. */
   rewards: TournamentReward[] | null;
+  /** Only on the detail read: registered teams (game IDs only for the host). */
+  teams: Team[] | null;
+  /** Only on the detail read: where a player's game ID is checked for this game (null = nowhere right now). */
+  idCheck: { regionId: string; fieldKey: string; fieldLabel: string } | null;
 };
+
+export type TeamStatus = 'draft' | 'registered' | 'cancelled';
+
+export type TeamMember = {
+  slot: number;
+  userId: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+  gameId: string | null;
+  playerName: string | null;
+  validationId: string | null;
+  verified: boolean;
+};
+
+export type Team = {
+  id: string;
+  name: string;
+  status: TeamStatus;
+  feePaid: number;
+  isCaptain: boolean;
+  members: TeamMember[];
+};
+
+export function toTeam(r: Row): Team {
+  return {
+    id: String(r.id),
+    name: String(r.name),
+    status: r.status as TeamStatus,
+    feePaid: Number(r.fee_paid ?? 0),
+    isCaptain: r.is_captain === true,
+    members: Array.isArray(r.members)
+      ? (r.members as Row[]).map((m) => ({
+          slot: Number(m.slot),
+          userId: str(m.user_id),
+          name: str(m.name),
+          avatarUrl: str(m.avatar_url),
+          gameId: str(m.game_id),
+          playerName: str(m.player_name),
+          validationId: str(m.validation_id),
+          verified: m.verified === true,
+        }))
+      : [],
+  };
+}
 
 type Row = Record<string, unknown>;
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -58,6 +115,25 @@ export function toTournament(r: Row): Tournament {
     host: { name: str(host.name) ?? '', avatarUrl: str(host.avatar_url) },
     firstPlace: { money: Number(first.money ?? 0), products: Number(first.products ?? 0) },
     places: Number(r.places ?? 0),
+    prizeText: str(r.prize_text),
+    rewardsFunded: r.rewards_funded === true,
+    teamsRegistered: Number(r.teams_registered ?? 0),
+    reminded: r.reminded === true,
+    myTeam: r.my_team
+      ? (() => {
+          const m = r.my_team as Row;
+          return { id: String(m.id), name: String(m.name), status: m.status as TeamStatus, isCaptain: m.is_captain === true };
+        })()
+      : null,
+    teams: Array.isArray(r.teams) ? (r.teams as Row[]).map(toTeam) : null,
+    idCheck: r.id_check
+      ? (() => {
+          const c = r.id_check as Row;
+          return typeof c.region_id === 'string' && typeof c.field_key === 'string'
+            ? { regionId: c.region_id, fieldKey: c.field_key, fieldLabel: str(c.field_label) ?? 'Player ID' }
+            : null;
+        })()
+      : null,
     rewards: Array.isArray(r.rewards)
       ? (r.rewards as Row[]).map((w) => ({
           place: Number(w.place),
@@ -72,7 +148,7 @@ export function toTournament(r: Row): Tournament {
   };
 }
 
-export type ListScope = 'open' | 'hosting';
+export type ListScope = 'open' | 'hosting' | 'mine';
 
 export async function fetchTournaments(scope: ListScope, game: Game | null): Promise<Tournament[]> {
   const { data, error } = await supabase.rpc('tournament_list', { p_scope: scope, p_game: game });
@@ -96,9 +172,44 @@ export async function createTournament(payload: CreatePayload): Promise<string> 
 
 export async function updateTournament(
   id: string,
-  changes: { name?: string; starts_at?: string; stream_platform?: StreamPlatform | ''; stream_url?: string }
+  changes: { name?: string; starts_at?: string; stream_platform?: StreamPlatform | ''; stream_url?: string; prize_text?: string }
 ): Promise<void> {
   const { error } = await supabase.rpc('tournament_update', { p_id: id, p: changes });
+  if (error) throw error;
+}
+
+export async function setReminder(id: string, on: boolean): Promise<void> {
+  const { error } = await supabase.rpc('tournament_set_reminder', { p_id: id, p_on: on });
+  if (error) throw error;
+}
+
+/** The signed-in person's own team in a tournament (a captain's draft included), or null. */
+export async function fetchMyTeam(tournamentId: string): Promise<Team | null> {
+  const { data, error } = await supabase.rpc('tournament_my_team', { p_tournament: tournamentId });
+  if (error) throw error;
+  return data ? toTeam(data as Row) : null;
+}
+
+/** Saves the captain's draft (creates it the first time). Returns the team id. */
+export async function saveTeam(
+  tournamentId: string,
+  payload: { name: string; members: { slot: number; user_id: string | null; game_id: string | null; validation_id: string | null }[] }
+): Promise<string> {
+  const { data, error } = await supabase.rpc('tournament_team_save', { p_tournament: tournamentId, p: payload });
+  if (error) throw error;
+  return String(data);
+}
+
+/** Pays the entry fee (if any) from the wallet and takes a spot. */
+export async function registerTeam(teamId: string): Promise<{ balance: number | null }> {
+  const { data, error } = await supabase.rpc('tournament_team_register', { p_team: teamId });
+  if (error) throw error;
+  const d = (data ?? {}) as Row;
+  return { balance: d.balance === undefined || d.balance === null ? null : Number(d.balance) };
+}
+
+export async function discardTeam(teamId: string): Promise<void> {
+  const { error } = await supabase.rpc('tournament_team_discard', { p_team: teamId });
   if (error) throw error;
 }
 

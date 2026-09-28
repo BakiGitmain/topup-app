@@ -25,6 +25,7 @@ const TX_ICONS: Record<TransactionKind, FeatherName> = {
   withdrawal: 'arrow-up-right',
   portal_coin_redemption: 'star',
   commission: 'tag',
+  tournament: 'award',
 };
 
 /** The wallet: balance, Deposit / Withdraw, what is waiting, and every line of the ledger. */

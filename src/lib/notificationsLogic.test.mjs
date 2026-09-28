@@ -245,3 +245,27 @@ describe('gift notifications (20261021090000): recipient -> Vault, buyer -> thei
     assert.match(panel, /target\?\.kind === 'order'/);
   });
 });
+
+describe('tournament notifications', () => {
+  const TID = '11111111-2222-4333-8444-555555555555';
+  const t = (key, vars = {}) => `${key}|${Object.entries(vars).map(([k, v]) => `${k}=${v}`).join(',')}`;
+  it('each type renders from its data and opens the tournament', () => {
+    for (const [type, data] of [
+      ['tournament_team_registered', { tournament_id: TID, tournament_name: 'Cup', team_name: 'Wolves', teams: 1, team_count: 8 }],
+      ['tournament_joined', { tournament_id: TID, tournament_name: 'Cup', team_name: 'Wolves', captain_name: 'Abel' }],
+      ['tournament_starting', { tournament_id: TID, tournament_name: 'Cup' }],
+      ['tournament_cancelled', { tournament_id: TID, tournament_name: 'Cup' }],
+    ]) {
+      const text = notificationText({ type, title: 'x', body: 'y', data }, t);
+      assert.notEqual(text.title, 'x', type);
+      assert.match(text.body, /Cup/, type);
+      assert.deepEqual(notificationTarget({ type, data }), { kind: 'tournament', tournamentId: TID }, type);
+      assert.notEqual(notificationIcon(type), 'bell', type);
+      assert.equal(notificationAction({ type, data }, new Map())?.opens, 'notif.opens.tournament');
+    }
+  });
+  it('missing data falls back to the stored text and opens nothing', () => {
+    assert.deepEqual(notificationText({ type: 'tournament_starting', title: 'T', body: 'B', data: {} }, t), { title: 'T', body: 'B' });
+    assert.equal(notificationTarget({ type: 'tournament_starting', data: { tournament_id: 'nope' } }), null);
+  });
+});

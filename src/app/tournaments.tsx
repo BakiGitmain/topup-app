@@ -31,7 +31,7 @@ export default function TournamentsScreen() {
   const [game, setGame] = useState<GameFilter>('all');
   const [refreshing, setRefreshing] = useState(false);
   // A creator who stops being one must not be left on a tab they no longer have.
-  const shownScope: ListScope = isContentCreator ? scope : 'open';
+  const shownScope: ListScope = scope === 'hosting' && !isContentCreator ? 'open' : scope;
 
   const list = useAsync(() => fetchTournaments(shownScope, game === 'all' ? null : game), `${shownScope}|${game}`, !!session);
   useRefreshOnFocus(list.reload);
@@ -56,19 +56,18 @@ export default function TournamentsScreen() {
           <ScreenHeader title={t('tournament.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/profile'))} />
 
           {isContentCreator && (
-            <>
-              <Button label={t('tournament.hostButton')} icon="plus" variant="dark" onPress={() => router.push('/tournament/host')} style={styles.host} />
-              <PillGroup
-                label={t('tournament.title')}
-                options={[
-                  { id: 'open', label: t('tournament.tab.open') },
-                  { id: 'hosting', label: t('tournament.tab.hosting') },
-                ]}
-                value={scope}
-                onChange={setScope}
-              />
-            </>
+            <Button label={t('tournament.hostButton')} icon="plus" variant="dark" onPress={() => router.push('/tournament/host')} style={styles.host} />
           )}
+          <PillGroup
+            label={t('tournament.title')}
+            options={[
+              { id: 'open', label: t('tournament.tab.open') },
+              { id: 'mine', label: t('tournament.tab.mine') },
+              ...(isContentCreator ? [{ id: 'hosting' as const, label: t('tournament.tab.hosting') }] : []),
+            ]}
+            value={shownScope}
+            onChange={setScope}
+          />
 
           <View style={styles.filters}>
             <Chips<GameFilter>
@@ -88,8 +87,8 @@ export default function TournamentsScreen() {
               <View style={styles.emptyIcon}>
                 <FeatherIcon name="award" size={26} color={colors.limeDark} />
               </View>
-              <Text style={styles.emptyTitle}>{shownScope === 'hosting' ? t('tournament.empty.hosting') : t('tournament.empty.open')}</Text>
-              <Text style={styles.emptyBody}>{shownScope === 'hosting' ? t('tournament.empty.hostingBody') : t('tournament.empty.openBody')}</Text>
+              <Text style={styles.emptyTitle}>{t(`tournament.empty.${shownScope}`)}</Text>
+              <Text style={styles.emptyBody}>{t(`tournament.empty.${shownScope}Body`)}</Text>
             </View>
           ) : (
             <View style={styles.list}>

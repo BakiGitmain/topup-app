@@ -63,7 +63,15 @@ export type NotifTextKey =
   | 'notif.codeRedeemed.title'
   | 'notif.codeRedeemed.body'
   | 'notif.giftDelivered.title'
-  | 'notif.giftDelivered.body';
+  | 'notif.giftDelivered.body'
+  | 'notif.tournamentTeam.title'
+  | 'notif.tournamentTeam.body'
+  | 'notif.tournamentJoined.title'
+  | 'notif.tournamentJoined.body'
+  | 'notif.tournamentStarting.title'
+  | 'notif.tournamentStarting.body'
+  | 'notif.tournamentCancelled.title'
+  | 'notif.tournamentCancelled.body';
 
 /** "Br 1,250" for a whole amount, "Br 30.50" otherwise. Local copy of the birr style so this file stays import-free. */
 export function notifBirr(value: unknown): string | null {
@@ -140,6 +148,30 @@ export function notificationText(
       if (product && pack) return { title: t('notif.giftDelivered.title'), body: t('notif.giftDelivered.body', { product, pack }) };
       break;
     }
+    case 'tournament_team_registered': {
+      const tournament = str(d.tournament_name);
+      const team = str(d.team_name);
+      if (tournament && team) {
+        return { title: t('notif.tournamentTeam.title'), body: t('notif.tournamentTeam.body', { team, tournament, n: String(d.teams ?? '?'), total: String(d.team_count ?? '?') }) };
+      }
+      break;
+    }
+    case 'tournament_joined': {
+      const tournament = str(d.tournament_name);
+      const team = str(d.team_name);
+      if (tournament && team) return { title: t('notif.tournamentJoined.title'), body: t('notif.tournamentJoined.body', { name: str(d.captain_name) ?? '…', team, tournament }) };
+      break;
+    }
+    case 'tournament_starting': {
+      const tournament = str(d.tournament_name);
+      if (tournament) return { title: t('notif.tournamentStarting.title'), body: t('notif.tournamentStarting.body', { tournament }) };
+      break;
+    }
+    case 'tournament_cancelled': {
+      const tournament = str(d.tournament_name);
+      if (tournament) return { title: t('notif.tournamentCancelled.title'), body: t('notif.tournamentCancelled.body', { tournament }) };
+      break;
+    }
   }
   return { title: n.title, body: n.body };
 }
@@ -153,12 +185,15 @@ export type NotificationTarget =
   /** The Vault on one of its filters (a gift received; a delivered gift's code). */
   | { kind: 'vault'; filter: 'gifts' | 'cards' }
   /** The buyer's own order: their receipt for the gift / redeem code. */
-  | { kind: 'order'; orderId: string };
+  | { kind: 'order'; orderId: string }
+  /** A tournament's page. */
+  | { kind: 'tournament'; tournamentId: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const uuidOf = (value: unknown) => (typeof value === 'string' && UUID.test(value) ? value : null);
 
 const MONEY_TYPES = new Set(['deposit_approved', 'refund_credited', 'commission_credited', 'withdrawal_sent']);
+const TOURNAMENT_TYPES = new Set(['tournament_team_registered', 'tournament_joined', 'tournament_starting', 'tournament_cancelled']);
 
 /**
  * The target of a tap, or null when the notification has nothing usable to open (an old-format row, a type this
@@ -184,6 +219,10 @@ export function notificationTarget(n: Pick<AppNotification, 'type' | 'data'>): N
     const orderId = uuidOf(d.order_id);
     return orderId ? { kind: 'order', orderId } : null;
   }
+  if (TOURNAMENT_TYPES.has(n.type)) {
+    const tournamentId = uuidOf(d.tournament_id);
+    return tournamentId ? { kind: 'tournament', tournamentId } : null;
+  }
   return null;
 }
 
@@ -204,7 +243,8 @@ export type NotifOpensKey =
   | 'notif.opens.commission'
   | 'notif.opens.withdrawal'
   | 'notif.opens.vault'
-  | 'notif.opens.receipt';
+  | 'notif.opens.receipt'
+  | 'notif.opens.tournament';
 
 export type NotificationAction = { target: NotificationTarget; opens: NotifOpensKey; vars: Record<string, string> };
 
@@ -217,7 +257,15 @@ const OPENS_BY_TYPE: Record<string, NotifOpensKey> = {
 
 /** The id a target is checked by: the pack, or the transaction. Vault and order targets are never checked (always live). */
 export const targetKey = (target: NotificationTarget) =>
-  target.kind === 'pack' ? target.optionId : target.kind === 'transaction' ? target.transactionId : target.kind === 'order' ? target.orderId : `vault:${target.filter}`;
+  target.kind === 'pack'
+    ? target.optionId
+    : target.kind === 'transaction'
+      ? target.transactionId
+      : target.kind === 'order'
+        ? target.orderId
+        : target.kind === 'tournament'
+          ? `tournament:${target.tournamentId}`
+          : `vault:${target.filter}`;
 
 /**
  * THE decision for how a row looks: a row with somewhere real to go gets the chevron, the pressed tint and a label
@@ -240,6 +288,7 @@ export function notificationAction(
   }
   if (target.kind === 'vault') return { target, opens: 'notif.opens.vault', vars: {} };
   if (target.kind === 'order') return { target, opens: 'notif.opens.receipt', vars: {} };
+  if (target.kind === 'tournament') return { target, opens: 'notif.opens.tournament', vars: {} };
   return { target, opens: OPENS_BY_TYPE[n.type], vars: {} };
 }
 
@@ -262,7 +311,7 @@ export function targetIdsOf(items: readonly Pick<AppNotification, 'type' | 'data
  * row in the Transactions list, so a notification and the row it opens look alike. Anything else: the legacy
  * promo-code broadcast gets a gift, an unknown type a plain bell.
  */
-export type NotifIcon = 'percent' | 'arrow-down-left' | 'rotate-ccw' | 'tag' | 'arrow-up-right' | 'gift' | 'key' | 'check-circle' | 'bell';
+export type NotifIcon = 'percent' | 'arrow-down-left' | 'rotate-ccw' | 'tag' | 'arrow-up-right' | 'gift' | 'key' | 'check-circle' | 'bell' | 'award' | 'users' | 'clock' | 'x';
 
 const ICON_BY_TYPE: Record<string, NotifIcon> = {
   product_discount: 'percent',
@@ -275,6 +324,10 @@ const ICON_BY_TYPE: Record<string, NotifIcon> = {
   gift_claimed: 'gift',
   code_redeemed: 'key',
   gift_delivered: 'check-circle',
+  tournament_team_registered: 'users',
+  tournament_joined: 'award',
+  tournament_starting: 'clock',
+  tournament_cancelled: 'x',
 };
 
 export const notificationIcon = (type: string): NotifIcon => ICON_BY_TYPE[type] ?? 'bell';

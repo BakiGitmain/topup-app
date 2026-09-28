@@ -20,7 +20,7 @@ import { useT } from '../../lib/i18n';
 import { colors, fonts, radius, spacing } from '../../lib/theme';
 import { useToast } from '../../lib/toast';
 import { phaseOf, serverErrorOf } from '../../lib/tournamentRules';
-import { cancelTournament, fetchTournament, type TournamentReward } from '../../lib/tournaments';
+import { cancelTournament, fetchTournament, setReminder, type Tournament, type TournamentReward } from '../../lib/tournaments';
 import { useAsync, useRefreshOnFocus } from '../../lib/useAsync';
 import { useNow } from '../../lib/useNow';
 
@@ -38,6 +38,7 @@ export default function TournamentScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [reminding, setReminding] = useState(false);
 
   if (!initializing && !session) return <Redirect href="/sign-in" />;
 
@@ -48,6 +49,19 @@ export default function TournamentScreen() {
     setRefreshing(true);
     await detail.reload();
     setRefreshing(false);
+  }
+
+  async function toggleReminder() {
+    if (!tn || reminding) return;
+    setReminding(true);
+    try {
+      await setReminder(tn.id, !tn.reminded);
+      await detail.reload();
+    } catch {
+      toast(t('common.loadError'));
+    } finally {
+      setReminding(false);
+    }
   }
 
   async function cancel() {
@@ -154,27 +168,81 @@ export default function TournamentScreen() {
                 )}
               </View>
 
-              {tn.kind === 'live' && <Text style={styles.note}>{t('tournament.detail.liveNote')}</Text>}
+              {/* What the person looking can do: register a team (register), be reminded (anyone but the host). */}
+              {!tn.isHost && phase === 'upcoming' && (
+                <View style={styles.actions}>
+                  {tn.kind === 'register' && <RegisterAction tournament={tn} />}
+                  <Button
+                    label={tn.reminded ? t('tournament.detail.reminded') : t('tournament.detail.remind')}
+                    icon={tn.reminded ? 'check' : 'bell'}
+                    variant={tn.kind === 'live' && !tn.reminded ? 'solid' : 'outline'}
+                    onPress={toggleReminder}
+                    loading={reminding}
+                  />
+                  <Text style={styles.hintCenter}>{t('tournament.detail.remindHint')}</Text>
+                </View>
+              )}
 
-              <Text style={styles.section}>{t('tournament.detail.rewards')}</Text>
-              <View style={styles.places}>
-                {groupByPlace(tn.rewards ?? []).map(({ place, rewards }) => (
-                  <View key={place} style={styles.place}>
-                    <View style={styles.placeHead}>
-                      <View style={[styles.medal, place === 1 && styles.medalGold]}>
-                        <Text style={styles.medalText}>{place}</Text>
-                      </View>
-                      <Text style={styles.placeTitle}>{placeLabel(t, place)}</Text>
-                    </View>
-                    {allSame(rewards) && rewards.length > 1 ? (
-                      <RewardLine label={t('tournament.detail.everyPlayer')} reward={rewards[0]} />
-                    ) : (
-                      rewards.map((r) => <RewardLine key={r.slot} label={tn.teamSize === 1 ? '' : t('tournament.detail.player', { n: r.slot })} reward={r} />)
-                    )}
+              {tn.kind === 'live' ? (
+                <>
+                  <Text style={styles.section}>{t('tournament.host.prize')}</Text>
+                  <View style={styles.prizeCard}>
+                    <FeatherIcon name="award" size={20} color={colors.limeDark} />
+                    <Text style={styles.prizeText}>{tn.prizeText ?? '—'}</Text>
                   </View>
-                ))}
-              </View>
-              <Text style={styles.note}>{t('tournament.detail.rewardsNote')}</Text>
+                  <Text style={styles.note}>{t('tournament.detail.liveNote')}</Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.section}>{t('tournament.detail.rewards')}</Text>
+                  <View style={styles.places}>
+                    {groupByPlace(tn.rewards ?? []).map(({ place, rewards }) => (
+                      <View key={place} style={styles.place}>
+                        <View style={styles.placeHead}>
+                          <View style={[styles.medal, place === 1 && styles.medalGold]}>
+                            <Text style={styles.medalText}>{place}</Text>
+                          </View>
+                          <Text style={styles.placeTitle}>{placeLabel(t, place)}</Text>
+                        </View>
+                        {allSame(rewards) && rewards.length > 1 ? (
+                          <RewardLine label={t('tournament.detail.everyPlayer')} reward={rewards[0]} />
+                        ) : (
+                          rewards.map((r) => <RewardLine key={r.slot} label={tn.teamSize === 1 ? '' : t('tournament.detail.player', { n: r.slot })} reward={r} />)
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                  {tn.rewardsFunded && <Text style={styles.note}>{t('tournament.detail.rewardsNote')}</Text>}
+
+                  <Text style={styles.section}>{t('tournament.detail.teams')}</Text>
+                  <Text style={styles.spots}>{t('tournament.detail.spots', { n: tn.teamsRegistered, total: tn.teamCount ?? 0 })}</Text>
+                  {(tn.teams ?? []).length === 0 ? (
+                    <Text style={styles.note}>{t('tournament.detail.noTeams')}</Text>
+                  ) : (
+                    <View style={styles.places}>
+                      {(tn.teams ?? []).map((team, i) => (
+                        <View key={team.id} style={styles.place}>
+                          <View style={styles.placeHead}>
+                            <View style={styles.medal}>
+                              <Text style={styles.medalText}>{i + 1}</Text>
+                            </View>
+                            <Text style={styles.placeTitle} numberOfLines={1}>
+                              {team.name}
+                            </Text>
+                          </View>
+                          {/* The host sees who plays (checked in-game names and IDs) to run the match. */}
+                          {tn.isHost &&
+                            team.members.map((m) => (
+                              <Text key={m.slot} style={styles.memberLine} numberOfLines={1}>
+                                {m.slot}. {[m.playerName, m.gameId].filter(Boolean).join(' · ') || m.name}
+                              </Text>
+                            ))}
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </>
+              )}
 
               {tn.isHost && phase === 'upcoming' && (
                 <View style={styles.hostBox}>
@@ -208,6 +276,26 @@ export default function TournamentScreen() {
       )}
     </SafeAreaView>
   );
+}
+
+/** Register a team / continue the draft / your registered team / no spots left. */
+function RegisterAction({ tournament: tn }: { tournament: Tournament }) {
+  const t = useT();
+  const open = () => router.push({ pathname: '/tournament/team/[id]', params: { id: tn.id } });
+  if (tn.myTeam && tn.myTeam.status === 'registered') {
+    return (
+      <Pressable onPress={open} accessibilityRole="button" style={({ pressed }) => [styles.myTeam, pressed && styles.pressed]}>
+        <FeatherIcon name="check-circle" size={20} color={colors.limeDark} />
+        <Text style={styles.myTeamText} numberOfLines={1}>
+          {t('tournament.detail.yourTeam', { name: tn.myTeam.name })}
+        </Text>
+        <FeatherIcon name="chevron-right" size={18} color={colors.textFaint} />
+      </Pressable>
+    );
+  }
+  const full = tn.teamCount !== null && tn.teamsRegistered >= tn.teamCount;
+  if (full) return <Button label={t('tournament.detail.full')} disabled onPress={() => {}} />;
+  return <Button label={tn.myTeam ? t('tournament.detail.continueDraft') : t('tournament.detail.register')} icon="users" onPress={open} />;
 }
 
 function groupByPlace(rewards: TournamentReward[]) {
@@ -296,6 +384,14 @@ const styles = StyleSheet.create({
   rewardLabel: { width: 96, fontFamily: fonts.medium, fontSize: 13.5, color: colors.textMuted },
   rewardValue: { flex: 1, fontFamily: fonts.semibold, fontSize: 14, color: colors.text },
 
+  actions: { marginTop: spacing.md, gap: spacing.sm },
+  hintCenter: { textAlign: 'center', fontFamily: fonts.regular, fontSize: 12.5, color: colors.textMuted },
+  prizeCard: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm + 2, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.limeSoft },
+  prizeText: { flex: 1, fontFamily: fonts.bold, fontSize: 16, lineHeight: 22, color: colors.text },
+  spots: { marginTop: -spacing.xs, marginBottom: spacing.sm + 2, fontFamily: fonts.semibold, fontSize: 13.5, color: colors.limeInk },
+  memberLine: { fontFamily: fonts.medium, fontSize: 13, color: colors.textMuted },
+  myTeam: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 2, height: 56, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.limeSoft },
+  myTeamText: { flex: 1, fontFamily: fonts.bold, fontSize: 15.5, color: colors.limeDark },
   hostBox: { marginTop: spacing.lg, padding: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.sm + 2 },
   hostTitle: { fontFamily: fonts.bold, fontSize: 15, color: colors.text },
   cancel: { height: 48, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },

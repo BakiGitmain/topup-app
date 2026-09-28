@@ -25,6 +25,8 @@ export const NAME_MIN = 3;
 export const NAME_MAX = 60;
 export const MAX_FEE = 100_000;
 export const MAX_REWARD = 1_000_000;
+export const PRIZE_MIN = 2;
+export const PRIZE_MAX = 300;
 /** The platform's share of every entry fee; the host gets the rest when the tournament ends. */
 export const PLATFORM_CUT_PERCENT = 15;
 /** Mirrors tournament_start_window(). */
@@ -166,11 +168,14 @@ export type HostForm = {
   fee: string;
   startsAt: Date | null;
   streamUrl: string;
+  /** Live only: what the winner gets, in the host's words. */
+  prize: string;
+  /** Register only: paid for by the host when they publish. */
   rewards: RewardGrid;
 };
 
 export function emptyHostForm(): HostForm {
-  return { game: null, kind: null, mode: null, name: '', teamSize: 4, teamCount: 8, paid: false, fee: '', startsAt: null, streamUrl: '', rewards: [[null, null, null, null]] };
+  return { game: null, kind: null, mode: null, name: '', teamSize: 4, teamCount: 8, paid: false, fee: '', startsAt: null, streamUrl: '', prize: '', rewards: [[null, null, null, null]] };
 }
 
 /** What each problem is called; the screen turns it into a sentence (tournament.err.<key>). */
@@ -187,6 +192,7 @@ export type FormProblem =
   | 'startTooFar'
   | 'streamRequired'
   | 'streamInvalid'
+  | 'prize'
   | 'rewards';
 
 export type CreatePayload = {
@@ -200,6 +206,7 @@ export type CreatePayload = {
   starts_at: string;
   stream_platform: StreamPlatform | null;
   stream_url: string | null;
+  prize_text: string | null;
   rewards: ({ place: number; slot: number; kind: 'money'; amount: number } | { place: number; slot: number; kind: 'product'; option_id: string })[];
 };
 
@@ -225,6 +232,10 @@ export function detailsProblem(form: HostForm, now: number): FormProblem | null 
   } else if (form.kind === 'live') {
     return 'streamRequired';
   }
+  if (form.kind === 'live') {
+    const prize = form.prize.trim();
+    if (prize.length < PRIZE_MIN || prize.length > PRIZE_MAX) return 'prize';
+  }
   return null;
 }
 
@@ -232,13 +243,15 @@ export function detailsProblem(form: HostForm, now: number): FormProblem | null 
 export function buildCreatePayload(form: HostForm, now: number): { ok: true; payload: CreatePayload } | { ok: false; problem: FormProblem } {
   const problem = detailsProblem(form, now);
   if (problem) return { ok: false, problem };
+  const live = form.kind === 'live';
   const places = form.rewards.length;
   const expectedMax = maxPlaces(form.kind!, form.teamCount);
-  if (!gridComplete(form.rewards) || places > expectedMax || form.rewards.some((row) => row.length !== form.teamSize)) {
+  if (!live && (!gridComplete(form.rewards) || places > expectedMax || form.rewards.some((row) => row.length !== form.teamSize))) {
     return { ok: false, problem: 'rewards' };
   }
   const url = normalizeStreamUrl(form.streamUrl);
-  const rewards: CreatePayload['rewards'] = form.rewards.flatMap((row, p) =>
+  // A live tournament announces its prize as text and has no reward grid (nothing is paid for it).
+  const rewards: CreatePayload['rewards'] = live ? [] : form.rewards.flatMap((row, p) =>
     row.map((r, s) => {
       const at = { place: p + 1, slot: s + 1 };
       return r!.kind === 'money' ? { ...at, kind: 'money' as const, amount: r!.amount } : { ...at, kind: 'product' as const, option_id: (r as ProductReward).optionId };
@@ -257,6 +270,7 @@ export function buildCreatePayload(form: HostForm, now: number): { ok: true; pay
       starts_at: form.startsAt!.toISOString(),
       stream_platform: url ? streamPlatformOf(url) : null,
       stream_url: url,
+      prize_text: live ? form.prize.trim() : null,
       rewards,
     },
   };
@@ -305,6 +319,23 @@ export const SERVER_ERRORS = [
   'too_many_tournaments',
   'tournament_closed',
   'tournament_not_found',
+  'invalid_prize',
+  'insufficient_balance',
+  'not_register',
+  'host_cannot_join',
+  'invalid_team_name',
+  'team_name_taken',
+  'invalid_members',
+  'member_not_found',
+  'duplicate_member',
+  'duplicate_game_id',
+  'id_check_unavailable',
+  'id_not_verified',
+  'already_in_team',
+  'team_locked',
+  'team_not_found',
+  'team_incomplete',
+  'tournament_full',
 ] as const;
 export type ServerError = (typeof SERVER_ERRORS)[number];
 
@@ -312,4 +343,77 @@ export function serverErrorOf(error: unknown): ServerError | null {
   const message = (error as { message?: unknown } | null)?.message;
   if (typeof message !== 'string') return null;
   return SERVER_ERRORS.find((code) => message.includes(code)) ?? null;
+}
+
+// ------------------------------------------------------------------------------------------------ teams
+
+export const TEAM_NAME_MIN = 2;
+export const TEAM_NAME_MAX = 30;
+/** Mirrors the database's game_id check. */
+export const GAME_ID = /^[A-Za-z0-9_.@-]{2,40}$/;
+
+/** One slot of a team being put together. Slot 1 is always the captain (the person filling the form). */
+export type TeamSlot = {
+  slot: number;
+  /** The player's app account, found by their email. Slot 1: the captain. */
+  userId: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+  gameId: string;
+  /** From validate-id, for exactly `checkedGameId`. */
+  validationId: string | null;
+  checkedGameId: string | null;
+  playerName: string | null;
+};
+
+export function emptySlots(teamSize: number, captain: { id: string; name: string; avatarUrl: string | null }): TeamSlot[] {
+  return Array.from({ length: teamSize }, (_, i) => ({
+    slot: i + 1,
+    userId: i === 0 ? captain.id : null,
+    name: i === 0 ? captain.name : null,
+    avatarUrl: i === 0 ? captain.avatarUrl : null,
+    gameId: '',
+    validationId: null,
+    checkedGameId: null,
+    playerName: null,
+  }));
+}
+
+/** A slot is done when it has a person and a game ID that was checked AS TYPED now. */
+export function slotVerified(s: TeamSlot): boolean {
+  return !!s.userId && !!s.validationId && s.checkedGameId !== null && s.checkedGameId === s.gameId.trim();
+}
+
+/** What the server's save takes: every slot with a person; the check only while it matches the typed ID. */
+export function teamSavePayload(name: string, slots: readonly TeamSlot[]) {
+  return {
+    name: name.trim(),
+    members: slots
+      .filter((s) => s.slot === 1 || s.userId)
+      .map((s) => {
+        const gameId = s.gameId.trim();
+        const verified = slotVerified(s);
+        return {
+          slot: s.slot,
+          user_id: s.slot === 1 ? null : s.userId,
+          // An ID that isn't checked (yet) isn't sent: a draft keeps only what is proven.
+          game_id: verified ? gameId : null,
+          validation_id: verified ? s.validationId : null,
+        };
+      }),
+  };
+}
+
+export type TeamProblem = 'teamName' | 'teamIncomplete' | 'duplicateGameId' | 'duplicatePlayer';
+
+/** Why Register can't be pressed yet (null = it can). */
+export function teamProblem(name: string, slots: readonly TeamSlot[]): TeamProblem | null {
+  const n = name.trim();
+  if (n.length < TEAM_NAME_MIN || n.length > TEAM_NAME_MAX) return 'teamName';
+  const users = slots.map((s) => s.userId).filter(Boolean);
+  if (new Set(users).size !== users.length) return 'duplicatePlayer';
+  const ids = slots.map((s) => s.gameId.trim()).filter(Boolean);
+  if (new Set(ids).size !== ids.length) return 'duplicateGameId';
+  if (!slots.every(slotVerified)) return 'teamIncomplete';
+  return null;
 }
